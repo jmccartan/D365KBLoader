@@ -209,3 +209,45 @@ class DataverseClient:
                 f"Failed to set state ({statecode}/{statuscode}) for article {article_id}: "
                 f"{resp.status_code} - {resp.text}"
             )
+
+    def get_article_counts_by_status(self) -> dict[str, int]:
+        """Get a count of knowledge articles grouped by status.
+
+        Returns a dict like: {"Draft": 5, "Approved": 2, "Published": 10, "Archived": 1}
+        """
+        status_labels = {
+            0: "Draft",
+            1: "Draft",
+            2: "Draft",
+            3: "Unapproved",
+            4: "Unapproved",
+            5: "Approved",
+            6: "Scheduled",
+            7: "Published",
+            8: "Needs Review",
+            9: "Updating",
+            10: "Expired",
+            11: "Rejected",
+            12: "Archived",
+            13: "Discarded",
+        }
+
+        # Query all articles grouped by statuscode
+        url = self._api(
+            "knowledgearticles?$apply=groupby((statuscode),aggregate($count as count))"
+        )
+        resp = self._request("GET", url)
+        resp.raise_for_status()
+        data = resp.json()
+
+        counts: dict[str, int] = {}
+        total = 0
+        for item in data.get("value", []):
+            code = item.get("statuscode", -1)
+            count = item.get("count", 0)
+            label = status_labels.get(code, f"Unknown ({code})")
+            counts[label] = counts.get(label, 0) + count
+            total += count
+
+        counts["Total"] = total
+        return counts

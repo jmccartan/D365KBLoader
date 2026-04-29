@@ -165,8 +165,19 @@ def main():
     if not args.dry_run:
         dv_client = DataverseClient(auth, config)
 
-    # Step 2: Process each file
+    # Step 2: Snapshot KB article counts before processing
     run_log = RunLog()
+    if dv_client:
+        try:
+            logger.info("Fetching KB article counts (before)...")
+            pre_counts = dv_client.get_article_counts_by_status()
+            run_log.set_pre_counts(pre_counts)
+            for status, count in sorted(pre_counts.items()):
+                logger.info(f"  {status}: {count}")
+        except Exception as e:
+            logger.warning(f"Could not fetch pre-run article counts: {e}")
+
+    # Step 3: Process each file
     stats = {"converted": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
 
     for i, doc_file in enumerate(files, 1):
@@ -260,6 +271,17 @@ def main():
             run_log.add_entry(**log_entry)
             stats["errors"] += 1
             continue
+
+    # Snapshot KB article counts after processing
+    if dv_client:
+        try:
+            logger.info("Fetching KB article counts (after)...")
+            post_counts = dv_client.get_article_counts_by_status()
+            run_log.set_post_counts(post_counts)
+            for status, count in sorted(post_counts.items()):
+                logger.info(f"  {status}: {count}")
+        except Exception as e:
+            logger.warning(f"Could not fetch post-run article counts: {e}")
 
     # Save run log
     log_path = run_log.save(config.output_dir)

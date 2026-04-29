@@ -44,6 +44,16 @@ class RunLog:
     def __init__(self):
         self.rows: list[dict] = []
         self.run_start = datetime.now(timezone.utc)
+        self.pre_counts: dict[str, int] = {}
+        self.post_counts: dict[str, int] = {}
+
+    def set_pre_counts(self, counts: dict[str, int]):
+        """Set the KB article counts snapshot taken before processing."""
+        self.pre_counts = counts
+
+    def set_post_counts(self, counts: dict[str, int]):
+        """Set the KB article counts snapshot taken after processing."""
+        self.post_counts = counts
 
     def add_entry(
         self,
@@ -93,6 +103,56 @@ class RunLog:
             f"{sum(1 for r in self.rows if r['error'])} errors",
         ])
         ws.append([])  # blank row
+
+        # -- KB Article Counts (Before & After) --
+        if self.pre_counts or self.post_counts:
+            all_statuses = sorted(
+                set(list(self.pre_counts.keys()) + list(self.post_counts.keys())) - {"Total"}
+            )
+
+            ws.append(["KB Article Counts"])
+            ws.cell(row=ws.max_row, column=1).font = Font(bold=True, size=12)
+
+            # Header row for counts table
+            ws.append(["Status", "Before Run", "After Run", "Change"])
+            count_header_row = ws.max_row
+            for col_idx in range(1, 5):
+                cell = ws.cell(row=count_header_row, column=col_idx)
+                cell.font = HEADER_FONT
+                cell.fill = HEADER_FILL
+                cell.alignment = HEADER_ALIGN
+                cell.border = THIN_BORDER
+            ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width or 0, 30)
+
+            for status in all_statuses:
+                before = self.pre_counts.get(status, 0)
+                after = self.post_counts.get(status, 0)
+                change = after - before
+                change_str = f"+{change}" if change > 0 else str(change)
+                ws.append([status, before, after, change_str])
+                current_row = ws.max_row
+                for col_idx in range(1, 5):
+                    ws.cell(row=current_row, column=col_idx).border = THIN_BORDER
+                # Highlight non-zero changes
+                change_cell = ws.cell(row=current_row, column=4)
+                if change > 0:
+                    change_cell.fill = YES_FILL
+                elif change < 0:
+                    change_cell.fill = NO_FILL
+
+            # Total row
+            before_total = self.pre_counts.get("Total", 0)
+            after_total = self.post_counts.get("Total", 0)
+            total_change = after_total - before_total
+            total_change_str = f"+{total_change}" if total_change > 0 else str(total_change)
+            ws.append(["Total", before_total, after_total, total_change_str])
+            total_row = ws.max_row
+            for col_idx in range(1, 5):
+                cell = ws.cell(row=total_row, column=col_idx)
+                cell.font = Font(bold=True)
+                cell.border = THIN_BORDER
+
+            ws.append([])  # blank row
 
         # -- Header row --
         header_row_num = ws.max_row + 1

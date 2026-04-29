@@ -82,7 +82,7 @@ DATAVERSE_URL=https://your-org.crm.dynamics.com
 az login
 ```
 
-This opens a browser where you sign in with your Microsoft account. Tokens are cached across runs.
+This opens a browser where you sign in with your Microsoft account. Access tokens are cached across runs.
 
 ---
 
