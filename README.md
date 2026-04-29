@@ -84,7 +84,23 @@ This opens a browser where you sign in with your Microsoft account. Tokens are c
 
 ## Usage
 
-### Local folder (simplest — great for OneDrive-synced SharePoint folders)
+> **Recommended:** Run with `--dry-run` first to convert files and review the HTML output before publishing to Dataverse.
+
+### Step 1: Dry run (preview — converts to HTML only, nothing is published)
+
+**Windows:**
+```cmd
+python -m kb_loader --local-folder "C:\Users\you\OneDrive - Company\KB Articles" --dry-run
+```
+
+**Mac:**
+```bash
+python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles --dry-run
+```
+
+Review the HTML files in the `./output` folder and check the Excel run log to confirm the right files were picked up.
+
+### Step 2: Publish to Dataverse (when you're happy with the dry run)
 
 **Windows:**
 ```cmd
@@ -100,12 +116,6 @@ python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles
 
 ```bash
 python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles"
-```
-
-### Dry run (convert to HTML only, don't upload to Dataverse)
-
-```bash
-python -m kb_loader --local-folder ./docs --dry-run
 ```
 
 ### All options combined
