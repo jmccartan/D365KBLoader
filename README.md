@@ -122,6 +122,24 @@ python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles
 python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles"
 ```
 
+### Check KB status (no processing — just view current article counts)
+
+```bash
+python -m kb_loader --kb-status
+```
+
+Example output:
+```
+KB Article Summary
+===================================
+  Archived                    2
+  Draft                       3
+  Published                  10
+-----------------------------------
+  Total                      15
+===================================
+```
+
 ### All options combined
 
 **Windows:**
@@ -145,6 +163,7 @@ python -m kb_loader --local-folder ./docs --output-dir ./html_output --existing 
 | `--output-dir` | Local directory for HTML files and run logs | `./output` |
 | `--existing` | Handle duplicates: `skip`, `update`, or `duplicate` | `skip` |
 | `--dry-run` | Convert only, don't upload to Dataverse | `false` |
+| `--kb-status` | Show current KB article counts by status and exit | — |
 | `--verbose` / `-v` | Enable debug logging | `false` |
 
 > **Note:** `--local-folder` and `--sharepoint-url` are mutually exclusive — use one or the other.

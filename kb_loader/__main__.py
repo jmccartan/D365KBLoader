@@ -93,6 +93,11 @@ def parse_args() -> argparse.Namespace:
         help="Convert files to HTML but don't upload to Dataverse.",
     )
     parser.add_argument(
+        "--kb-status",
+        action="store_true",
+        help="Show current KB article counts by status and exit (no processing).",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose/debug logging.",
@@ -104,6 +109,43 @@ def main():
     args = parse_args()
     setup_logging(args.verbose)
     logger = logging.getLogger("kb_loader")
+
+    # --kb-status: just show article counts and exit
+    if args.kb_status:
+        try:
+            config = load_config(
+                sharepoint_url="dummy",  # not needed, just satisfy validation
+                output_dir=args.output_dir,
+                existing_mode=args.existing,
+            )
+        except ValueError:
+            # Fallback: load just the dataverse URL from env
+            from dotenv import load_dotenv
+            import os
+            load_dotenv()
+            dataverse_url = os.getenv("DATAVERSE_URL", "")
+            if not dataverse_url:
+                logger.error("DATAVERSE_URL is required. Set it in .env or environment.")
+                sys.exit(1)
+            from kb_loader.config import Config
+            config = Config(dataverse_url=dataverse_url, output_dir="./output", existing_article_mode="skip")
+
+        auth = AuthClient()
+        dv_client = DataverseClient(auth, config)
+        try:
+            counts = dv_client.get_article_counts_by_status()
+        except Exception as e:
+            logger.error(f"Failed to fetch article counts: {e}")
+            sys.exit(1)
+
+        print("\nKB Article Summary")
+        print("=" * 35)
+        for status in sorted(counts.keys() - {"Total"}):
+            print(f"  {status:<20} {counts[status]:>6}")
+        print("-" * 35)
+        print(f"  {'Total':<20} {counts.get('Total', 0):>6}")
+        print("=" * 35)
+        sys.exit(0)
 
     try:
         config = load_config(
