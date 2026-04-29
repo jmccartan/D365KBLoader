@@ -75,7 +75,7 @@ Your terminal prompt should now show `(.venv)` — this confirms the environment
 pip install -r requirements.txt
 ```
 
-### 3. Configure your Dataverse URL
+### 3. Configure your environment
 
 **Windows:**
 ```cmd
@@ -96,6 +96,13 @@ DATAVERSE_URL=https://your-org.crm.dynamics.com
 > - Production: `https://your-org.crm.dynamics.com`
 > - Sandbox: `https://your-org-sandbox.crm.dynamics.com`
 
+If you plan to use SharePoint as your input source, also set the folder URL:
+```
+SHAREPOINT_FOLDER_URL=https://your-tenant.sharepoint.com/sites/YourSite/Shared Documents/YourFolder
+```
+
+> **How to get the SharePoint folder URL:** Navigate to the folder in SharePoint in your browser, then copy the URL from the address bar. The URL should look like `https://your-tenant.sharepoint.com/sites/SiteName/Shared Documents/FolderName`. You can also get it by clicking the **Copy link** button on the folder in SharePoint — just make sure you use the direct folder path (containing `/Shared Documents/`) rather than a sharing link.
+
 ### 4. Log in to Azure (one-time)
 
 ```bash
@@ -112,32 +119,36 @@ This opens a browser where you sign in with your Microsoft account. Access token
 
 ### Step 1: Dry run (preview — converts to HTML only, nothing is published)
 
-**Windows:**
+**Local folder — Windows:**
 ```cmd
 python -m kb_loader --local-folder "C:\Users\you\OneDrive - Company\KB Articles" --dry-run
 ```
 
-**Mac:**
+**Local folder — Mac:**
 ```bash
 python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles --dry-run
+```
+
+**SharePoint folder (reads directly from SharePoint via Graph API):**
+```bash
+python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles" --dry-run
 ```
 
 Review the HTML files in the `./output` folder and check the Excel run log to confirm the right files were picked up.
 
 ### Step 2: Publish to Dataverse (when you're happy with the dry run)
 
-**Windows:**
+**Local folder — Windows:**
 ```cmd
 python -m kb_loader --local-folder "C:\Users\you\OneDrive - Company\KB Articles"
 ```
 
-**Mac:**
+**Local folder — Mac:**
 ```bash
 python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles
 ```
 
-### SharePoint folder (reads directly from SharePoint via Graph API)
-
+**SharePoint folder:**
 ```bash
 python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles"
 ```
@@ -162,14 +173,19 @@ KB Article Summary
 
 ### All options combined
 
-**Windows:**
+**Local folder — Windows:**
 ```cmd
 python -m kb_loader --local-folder "C:\docs" --output-dir "C:\html_output" --existing skip --verbose
 ```
 
-**Mac:**
+**Local folder — Mac:**
 ```bash
 python -m kb_loader --local-folder ./docs --output-dir ./html_output --existing skip --verbose
+```
+
+**SharePoint folder:**
+```bash
+python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles" --output-dir ./html_output --existing skip --verbose
 ```
 
 ---
