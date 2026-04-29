@@ -1,14 +1,16 @@
 """SharePoint client using Microsoft Graph API.
 
-Resolves SharePoint folder URLs to drive items and recursively enumerates .docx files.
+Resolves SharePoint folder URLs to drive items and recursively enumerates Word files.
 """
 
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse, unquote
 import requests
 from kb_loader.auth import AuthClient
+from kb_loader.converter import SUPPORTED_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ RETRY_BASE_DELAY = 2
 
 @dataclass
 class SharePointFile:
-    """Represents a .docx file found in SharePoint."""
+    """Represents a Word file (.docx or .doc) found in SharePoint."""
     name: str
     item_id: str
     drive_id: str
@@ -154,7 +156,7 @@ class SharePointClient:
         return items
 
     def enumerate_docx_files(self, folder_url: str) -> list[SharePointFile]:
-        """Recursively find all .docx files in the given SharePoint folder."""
+        """Recursively find all Word files (.docx, .doc) in the given SharePoint folder."""
         hostname, site_path, library_name, folder_path = self._parse_sharepoint_url(folder_url)
 
         logger.info(f"Resolving SharePoint site: {hostname}/{site_path}")
@@ -165,13 +167,13 @@ class SharePointClient:
         files = []
         self._recurse_folder(drive_id, root_item_id, "", files)
 
-        logger.info(f"Found {len(files)} .docx file(s) in SharePoint.")
+        logger.info(f"Found {len(files)} Word file(s) in SharePoint.")
         return files
 
     def _recurse_folder(
         self, drive_id: str, item_id: str | None, relative_path: str, results: list[SharePointFile]
     ):
-        """Recursively enumerate .docx files in a folder."""
+        """Recursively enumerate Word files in a folder."""
         children = self._list_children(drive_id, item_id)
 
         for child in children:
@@ -183,7 +185,7 @@ class SharePointClient:
                 logger.debug(f"Entering subfolder: {sub_path}")
                 self._recurse_folder(drive_id, child["id"], sub_path, results)
 
-            elif "file" in child and child_name.lower().endswith(".docx"):
+            elif "file" in child and Path(child_name).suffix.lower() in SUPPORTED_EXTENSIONS:
                 download_url = child.get("@microsoft.graph.downloadUrl", "")
                 results.append(
                     SharePointFile(

@@ -14,14 +14,14 @@ from pathlib import Path
 
 from kb_loader.config import load_config
 from kb_loader.auth import AuthClient
-from kb_loader.converter import convert_docx_to_html, save_html_file
+from kb_loader.converter import convert_to_html, save_html_file, SUPPORTED_EXTENSIONS
 from kb_loader.dataverse_client import DataverseClient
 from kb_loader.run_log import RunLog
 
 
 @dataclass
 class DocxFile:
-    """A .docx file to process, from either local or SharePoint source."""
+    """A Word document (.docx or .doc) to process, from either local or SharePoint source."""
     name: str
     relative_path: str  # subfolder path relative to root
     source_display: str  # for logging
@@ -41,13 +41,15 @@ def setup_logging(verbose: bool):
 
 
 def enumerate_local_docx(folder: str) -> list[DocxFile]:
-    """Recursively find all .docx files in a local folder."""
+    """Recursively find all Word files (.docx and .doc) in a local folder."""
     root = Path(folder)
     if not root.is_dir():
         raise ValueError(f"Local folder not found: {folder}")
 
     files = []
-    for path in sorted(root.rglob("*.docx")):
+    for path in sorted(root.rglob("*")):
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
         # Skip temp/hidden files (e.g. ~$document.docx)
         if path.name.startswith("~$"):
             continue
@@ -70,11 +72,11 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group()
     source.add_argument(
         "--local-folder",
-        help="Local folder containing .docx files (e.g. OneDrive-synced SharePoint).",
+        help="Local folder containing Word files (.docx and .doc).",
     )
     source.add_argument(
         "--sharepoint-url",
-        help="SharePoint folder URL containing .docx files (requires az login).",
+        help="SharePoint folder URL containing Word files (requires az login).",
     )
     parser.add_argument(
         "--output-dir",
@@ -131,7 +133,7 @@ def main():
     auth = AuthClient()
 
     # Step 1: Enumerate .docx files
-    logger.info("Scanning for .docx files...")
+    logger.info("Scanning for Word files (.docx, .doc)...")
     try:
         if config.input_mode == "local":
             files = enumerate_local_docx(config.local_folder)
@@ -153,10 +155,10 @@ def main():
         sys.exit(1)
 
     if not files:
-        logger.info("No .docx files found. Nothing to do.")
+        logger.info("No Word files found. Nothing to do.")
         sys.exit(0)
 
-    logger.info(f"Found {len(files)} .docx file(s) to process.")
+    logger.info(f"Found {len(files)} Word file(s) to process.")
 
     # Initialize Dataverse client (only if not dry-run, to avoid unnecessary login)
     dv_client = None
@@ -189,7 +191,7 @@ def main():
 
             # Convert to HTML
             logger.info("  Converting to HTML...")
-            html, warnings = convert_docx_to_html(docx_bytes)
+            html, warnings = convert_to_html(docx_bytes, doc_file.name)
             if warnings:
                 for w in warnings:
                     logger.warning(f"  Conversion warning: {w}")
