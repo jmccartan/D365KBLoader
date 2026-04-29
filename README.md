@@ -32,9 +32,13 @@ Cross-platform CLI tool that loads Word documents into Dynamics 365 Knowledge Ba
 
 3. **Configure:**
    ```bash
+   # Windows
+   copy .env.example .env
+
+   # Mac/Linux
    cp .env.example .env
-   # Edit .env — only DATAVERSE_URL is required
    ```
+   Edit `.env` and set `DATAVERSE_URL=https://your-org.crm.dynamics.com`
 
 ## Usage
 
@@ -103,6 +107,22 @@ When re-running the tool, it checks for existing articles by title:
 - **`update`**: Overwrite the existing article's content
 - **`duplicate`**: Create a new article regardless
 
+## Run Log
+
+Each run generates a timestamped Excel file in the output directory (e.g. `output/kb_loader_log_20260429_143000.xlsx`) with:
+
+| Column | Description |
+|--------|-------------|
+| File Name | Original .docx filename |
+| Folder Path | Subfolder relative to input root |
+| File Size (bytes) | Raw file size |
+| Has Content | Whether HTML conversion produced content |
+| HTML Saved | Whether the HTML file was saved locally |
+| Published to KB | Whether it was published to Dataverse |
+| KB Action | Created, Updated, Skipped, Dry Run, or Error |
+| Article ID | Dataverse knowledge article ID |
+| Error | Error message if processing failed |
+
 ## Project Structure
 
 ```
@@ -117,5 +137,6 @@ D365KBLoader/
     ├── auth.py               # Azure CLI authentication
     ├── sharepoint_client.py  # SharePoint file enumeration & download
     ├── dataverse_client.py   # Knowledge Article CRUD & publishing
-    └── converter.py          # Word → HTML conversion
+    ├── converter.py          # Word → HTML conversion
+    └── run_log.py            # Excel run log generator
 ```
