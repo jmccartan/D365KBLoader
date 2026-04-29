@@ -101,7 +101,18 @@ If you plan to use SharePoint as your input source, also set the folder URL:
 SHAREPOINT_FOLDER_URL=https://your-tenant.sharepoint.com/sites/YourSite/Shared Documents/YourFolder
 ```
 
-> **How to get the SharePoint folder URL:** Navigate to the folder in SharePoint in your browser, then copy the URL from the address bar. The URL should look like `https://your-tenant.sharepoint.com/sites/SiteName/Shared Documents/FolderName`. You can also get it by clicking the **Copy link** button on the folder in SharePoint — just make sure you use the direct folder path (containing `/Shared Documents/`) rather than a sharing link.
+> **How to get the SharePoint folder URL:**
+>
+> The easiest way is to **copy the URL straight from your browser**. Navigate to the folder in SharePoint and copy the address bar — the tool will automatically extract the folder path, even if the URL contains extra parameters like `viewid` or `id`.
+>
+> Alternatively, you can build a clean URL manually:
+> ```
+> https://your-tenant.sharepoint.com/sites/SiteName/Shared Documents/FolderName
+> ```
+> - `Shared Documents` is the default document library URL name (shown as "Documents" in the SharePoint UI)
+> - Append any subfolder names separated by `/`
+>
+> **Note:** Sharing links (the kind you get from the **Copy link** / **Share** button) are *not* supported — they start with `/:f:/` and don't contain a direct folder path. Use the browser address bar instead.
 
 ### 4. Log in to Azure (one-time)
 
