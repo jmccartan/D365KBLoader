@@ -49,13 +49,33 @@ A cross-platform command-line tool that bulk-loads Word documents (`.docx` and `
 
 ## Setup
 
-### 1. Install Python dependencies
+### 1. Create and activate a virtual environment
+
+A virtual environment keeps this project's dependencies isolated from your global Python installation. See [why this is recommended](#recommended-use-a-virtual-environment) at the bottom of this README.
+
+**Windows:**
+```cmd
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+**Mac / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Your terminal prompt should now show `(.venv)` — this confirms the environment is active.
+
+> **Note:** You need to activate the venv each time you open a new terminal before running the tool. Just re-run the `activate` command above (you don't need to recreate the venv).
+
+### 2. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure your Dataverse URL
+### 3. Configure your Dataverse URL
 
 **Windows:**
 ```cmd
@@ -76,7 +96,7 @@ DATAVERSE_URL=https://your-org.crm.dynamics.com
 > - Production: `https://your-org.crm.dynamics.com`
 > - Sandbox: `https://your-org-sandbox.crm.dynamics.com`
 
-### 3. Log in to Azure (one-time)
+### 4. Log in to Azure (one-time)
 
 ```bash
 az login
@@ -247,3 +267,33 @@ D365KBLoader/
     ├── converter.py          # Word → HTML conversion (.docx + .doc)
     └── run_log.py            # Excel run log generator
 ```
+
+---
+
+## Recommended: Use a Virtual Environment
+
+Rather than installing dependencies globally, it's a good idea to use a **Python virtual environment** (venv). A venv creates an isolated Python installation specifically for this project, which means:
+
+- **No version conflicts** — other Python projects on your machine won't interfere with this one (and vice versa). If another project needs a different version of `requests` or `openpyxl`, both can coexist without issues.
+- **Clean uninstall** — when you're done with the project, just delete the `.venv` folder. No leftover packages polluting your global Python installation.
+- **Reproducibility** — everyone working on the project gets the exact same dependency versions, reducing "works on my machine" problems.
+
+### Creating and using a venv
+
+**Windows:**
+```cmd
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+**Mac / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Once activated, your terminal prompt will show `(.venv)` as a prefix. From there, all `python` and `pip` commands use the isolated environment automatically.
+
+> **Tip:** You need to activate the venv each time you open a new terminal. If you see an error like `ModuleNotFoundError: No module named 'mammoth'`, it usually means the venv isn't activated.
