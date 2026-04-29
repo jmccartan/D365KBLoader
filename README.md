@@ -1,51 +1,98 @@
 # D365 Knowledge Base Loader
 
-Cross-platform CLI tool that loads Word documents into Dynamics 365 Knowledge Base articles.
+A cross-platform command-line tool that bulk-loads Word documents (`.docx` and `.doc`) into Dynamics 365 Knowledge Base articles. Works on both **Windows** and **Mac**.
 
-## What it does
+## How It Works
 
-1. Reads `.docx` files from a **local folder** or **SharePoint** (via Microsoft Graph)
-2. Recursively processes all subfolders
-3. Converts each document to HTML using [mammoth](https://github.com/mwilliamson/python-mammoth)
-4. Saves HTML copies locally (preserving folder structure)
-5. Creates Knowledge Articles in Dataverse with the HTML content
-6. Publishes each article (Draft → Approved → Published)
+1. **Point it at a folder** of Word documents — either a local folder or a SharePoint URL
+2. It recursively finds all `.docx` and `.doc` files, including subfolders
+3. Each document is converted to clean HTML (using [mammoth](https://github.com/mwilliamson/python-mammoth); legacy `.doc` files are first converted via [LibreOffice](https://www.libreoffice.org/))
+4. An HTML copy is saved locally for reference, preserving the folder structure
+5. A Knowledge Article is created in D365 Dataverse with:
+   - **Title** = the filename (without extension)
+   - **Content** = the converted HTML
+   - **Status** = Published (transitions through Draft → Approved → Published)
+   - **Creation mode** = Manual
+   - **Language** = English
+6. An Excel log file is generated for each run summarizing every file processed
+
+## Key Features
+
+- **Two input modes** — read from a local folder or directly from SharePoint
+- **No app registration required** — authenticates via Azure CLI (`az login`)
+- **Dry run mode** (`--dry-run`) — convert files to HTML without uploading, useful for previewing
+- **Idempotent** — on re-runs, choose to `skip`, `update`, or `duplicate` existing articles
+- **Resilient** — retries on API throttling (429) and server errors (5xx)
+- **Traceability** — stores the source file path in each article's keywords and description
+- **Run log** — timestamped Excel report for every run
+
+---
 
 ## Prerequisites
 
 - **Python 3.10+**
+  - Windows: [Download from python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.13`
+  - Mac: `brew install python`
 - **Azure CLI** (`az`) — [Install guide](https://aka.ms/installazurecli)
-  - No app registration needed — just run `az login` with your Microsoft account
+  - Windows: `winget install Microsoft.AzureCLI`
+  - Mac: `brew install azure-cli`
+  - No app registration or admin setup needed — just sign in with your Microsoft account
   - Your account needs access to the D365/Dataverse environment
   - For SharePoint mode: your account also needs access to the SharePoint site
+- **LibreOffice** (only required if processing legacy `.doc` files)
+  - Windows: [Download from libreoffice.org](https://www.libreoffice.org/download/) or `winget install TheDocumentFoundation.LibreOffice`
+  - Mac: `brew install --cask libreoffice`
+- **D365 Customer Service** environment with Knowledge Management enabled
+
+---
 
 ## Setup
 
-1. **Install Azure CLI** (if not already installed):
-   - Windows: `winget install Microsoft.AzureCLI`
-   - Mac: `brew install azure-cli`
+### 1. Install Python dependencies
 
-2. **Install Python dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-3. **Configure:**
-   ```bash
-   # Windows
-   copy .env.example .env
+### 2. Configure your Dataverse URL
 
-   # Mac/Linux
-   cp .env.example .env
-   ```
-   Edit `.env` and set `DATAVERSE_URL=https://your-org.crm.dynamics.com`
+**Windows:**
+```cmd
+copy .env.example .env
+```
+
+**Mac:**
+```bash
+cp .env.example .env
+```
+
+Open `.env` in a text editor and set your Dataverse environment URL:
+```
+DATAVERSE_URL=https://your-org.crm.dynamics.com
+```
+
+### 3. Log in to Azure (one-time)
+
+```bash
+az login
+```
+
+This opens a browser where you sign in with your Microsoft account. Tokens are cached across runs.
+
+---
 
 ## Usage
 
 ### Local folder (simplest — great for OneDrive-synced SharePoint folders)
 
-```bash
+**Windows:**
+```cmd
 python -m kb_loader --local-folder "C:\Users\you\OneDrive - Company\KB Articles"
+```
+
+**Mac:**
+```bash
+python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles
 ```
 
 ### SharePoint folder (reads directly from SharePoint via Graph API)
@@ -60,60 +107,82 @@ python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite
 python -m kb_loader --local-folder ./docs --dry-run
 ```
 
-### All options
+### All options combined
 
-```bash
-python -m kb_loader \
-  --local-folder ./docs \
-  --output-dir ./html_output \
-  --existing skip \
-  --verbose
+**Windows:**
+```cmd
+python -m kb_loader --local-folder "C:\docs" --output-dir "C:\html_output" --existing skip --verbose
 ```
+
+**Mac:**
+```bash
+python -m kb_loader --local-folder ./docs --output-dir ./html_output --existing skip --verbose
+```
+
+---
 
 ## CLI Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--local-folder` | Local folder with .docx files | — |
+| `--local-folder` | Local folder with Word files (.docx, .doc) | — |
 | `--sharepoint-url` | SharePoint folder URL | — |
-| `--output-dir` | Local directory for HTML files | `./output` |
+| `--output-dir` | Local directory for HTML files and run logs | `./output` |
 | `--existing` | Handle duplicates: `skip`, `update`, or `duplicate` | `skip` |
 | `--dry-run` | Convert only, don't upload to Dataverse | `false` |
 | `--verbose` / `-v` | Enable debug logging | `false` |
+
+> **Note:** `--local-folder` and `--sharepoint-url` are mutually exclusive — use one or the other.
+
+---
 
 ## Authentication
 
 The tool uses **Azure CLI** for authentication — no app registration required.
 
 1. If you're not logged in, the tool automatically opens a browser for `az login`
-2. It acquires separate tokens for Graph API (SharePoint) and Dataverse
-3. Tokens are cached by Azure CLI across runs
+2. It acquires separate tokens for Graph API (SharePoint access) and Dataverse (article creation)
+3. Tokens are cached by Azure CLI across runs — you won't need to log in every time
 
-## How it handles Knowledge Articles
+---
 
-Each article is created with:
-- **Title**: Filename without extension (e.g., `Troubleshooting Guide.docx` → `Troubleshooting Guide`)
-- **Content**: Full HTML converted from the Word document
-- **Language**: English (locale 1033)
-- **Creation mode**: Manual (`msdyn_creationmode = 0`)
-- **Description**: Auto-generated with source path
-- **Keywords**: Source file path (for traceability)
-- **Status**: Published (transitions through Draft → Approved → Published)
+## Knowledge Article Details
+
+Each article is created in Dataverse with these fields:
+
+| Field | Value |
+|-------|-------|
+| **Title** | Filename without extension (e.g., `Troubleshooting Guide.docx` → `Troubleshooting Guide`) |
+| **Content** | Full HTML converted from the Word document |
+| **Language** | English (locale 1033) |
+| **Creation mode** | Manual (`msdyn_creationmode = 0`) |
+| **Description** | Auto-generated with source file path |
+| **Keywords** | Source file path (for traceability) |
+| **Status** | Published (transitions through Draft → Approved → Published) |
+
+---
 
 ## Idempotency
 
 When re-running the tool, it checks for existing articles by title:
-- **`skip`** (default): Skip files that already have a matching article
-- **`update`**: Overwrite the existing article's content
-- **`duplicate`**: Create a new article regardless
+
+| Mode | Behavior |
+|------|----------|
+| **`skip`** (default) | Skip files that already have a matching article |
+| **`update`** | Overwrite the existing article's content |
+| **`duplicate`** | Create a new article regardless |
+
+---
 
 ## Run Log
 
-Each run generates a timestamped Excel file in the output directory (e.g. `output/kb_loader_log_20260429_143000.xlsx`) with:
+Each run generates a timestamped Excel file in the output directory (e.g. `output/kb_loader_log_20260429_143000.xlsx`).
+
+The log includes a summary header and a row per file with these columns:
 
 | Column | Description |
 |--------|-------------|
-| File Name | Original .docx filename |
+| File Name | Original filename |
 | Folder Path | Subfolder relative to input root |
 | File Size (bytes) | Raw file size |
 | Has Content | Whether HTML conversion produced content |
@@ -122,6 +191,10 @@ Each run generates a timestamped Excel file in the output directory (e.g. `outpu
 | KB Action | Created, Updated, Skipped, Dry Run, or Error |
 | Article ID | Dataverse knowledge article ID |
 | Error | Error message if processing failed |
+
+Cells are color-coded (green = yes, red = no, yellow = skipped) and the sheet includes auto-filter and frozen headers.
+
+---
 
 ## Project Structure
 
@@ -137,6 +210,6 @@ D365KBLoader/
     ├── auth.py               # Azure CLI authentication
     ├── sharepoint_client.py  # SharePoint file enumeration & download
     ├── dataverse_client.py   # Knowledge Article CRUD & publishing
-    ├── converter.py          # Word → HTML conversion
+    ├── converter.py          # Word → HTML conversion (.docx + .doc)
     └── run_log.py            # Excel run log generator
 ```
