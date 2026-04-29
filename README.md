@@ -72,6 +72,10 @@ Open `.env` in a text editor and set your Dataverse environment URL:
 DATAVERSE_URL=https://your-org.crm.dynamics.com
 ```
 
+> **Tip:** The `DATAVERSE_URL` determines which D365 environment is targeted. Use your sandbox URL for testing before pointing at production:
+> - Production: `https://your-org.crm.dynamics.com`
+> - Sandbox: `https://your-org-sandbox.crm.dynamics.com`
+
 ### 3. Log in to Azure (one-time)
 
 ```bash
