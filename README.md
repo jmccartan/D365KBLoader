@@ -39,7 +39,8 @@ A cross-platform command-line tool that bulk-loads Word documents (`.docx` and `
   - No app registration or admin setup needed — just sign in with your Microsoft account
   - Your account needs access to the D365/Dataverse environment
   - For SharePoint mode: your account also needs access to the SharePoint site
-- **LibreOffice** (only required if processing legacy `.doc` files)
+- **LibreOffice** (only needed if you have legacy `.doc` files — not required for `.docx`)
+  - The tool will notify you with install instructions if a `.doc` file is encountered and LibreOffice is not installed
   - Windows: [Download from libreoffice.org](https://www.libreoffice.org/download/) or `winget install TheDocumentFoundation.LibreOffice`
   - Mac: `brew install --cask libreoffice`
 - **D365 Customer Service** environment with Knowledge Management enabled
