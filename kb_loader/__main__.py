@@ -286,6 +286,8 @@ def main():
                 article_id = existing["knowledgearticleid"]
                 logger.info(f"  Updating existing article '{title}' ({article_id})...")
                 dv_client.update_article_content(article_id, title, html, source_path)
+                logger.info(f"  Publishing updated article...")
+                dv_client.publish_article(article_id)
                 log_entry["kb_action"] = "Updated"
                 log_entry["article_id"] = article_id
                 log_entry["published"] = True
@@ -307,7 +309,7 @@ def main():
             run_log.add_entry(**log_entry)
 
         except Exception as e:
-            logger.error(f"  Error processing {doc_file.source_display}: {e}")
+            logger.exception(f"  Error processing {doc_file.source_display}: {e}")
             log_entry["error"] = str(e)
             log_entry["kb_action"] = "Error"
             run_log.add_entry(**log_entry)

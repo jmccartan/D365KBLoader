@@ -1,6 +1,8 @@
 """Configuration management from environment variables and .env file."""
 
 import os
+from pathlib import Path
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
@@ -31,7 +33,12 @@ def load_config(
     existing_mode: str | None = None,
 ) -> Config:
     """Load configuration from .env file and optional CLI overrides."""
-    load_dotenv()
+    env_path = Path(".env")
+    if not env_path.exists():
+        example_path = Path(".env.example")
+        hint = " Copy .env.example to .env and configure your settings." if example_path.exists() else ""
+        raise ValueError(f"No .env file found in {Path.cwd()}.{hint}")
+    load_dotenv(dotenv_path=env_path)
 
     dataverse_url = os.getenv("DATAVERSE_URL", "")
     sp_url = sharepoint_url or os.getenv("SHAREPOINT_FOLDER_URL", "")
@@ -41,6 +48,13 @@ def load_config(
 
     if not dataverse_url:
         raise ValueError("DATAVERSE_URL is required. Set it in .env or environment.")
+
+    parsed = urlparse(dataverse_url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError(
+            f"DATAVERSE_URL must be a valid HTTPS URL (e.g. https://your-org.crm.dynamics.com), "
+            f"got: {dataverse_url}"
+        )
     if not sp_url and not local:
         raise ValueError(
             "An input source is required. Use --sharepoint-url or --local-folder."
