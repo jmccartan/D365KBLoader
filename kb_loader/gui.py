@@ -442,7 +442,7 @@ class KBLoaderGUI:
         ttk.Label(
             bar_frame, textvariable=self.progress_label_var,
             font=font_bold(10),
-            width=14, anchor="e",
+            width=22, anchor="e",
         ).grid(row=0, column=1, sticky="e")
 
         # Output utility row
@@ -1350,7 +1350,7 @@ class KBLoaderGUI:
             if event.total > 0:
                 pct = (event.current / event.total) * 100
                 self.progress_bar.configure(value=pct, maximum=100)
-                self.progress_label_var.set(f"{event.current} / {event.total}")
+                self.progress_label_var.set(f"{event.current} / {event.total}  ({pct:.0f}%)")
         elif event.kind == "file_done":
             status_str = " · ".join(f"{k}: {v}" for k, v in event.status.items())
             tag = "error" if any("ERROR" in str(v) for v in event.status.values()) else ""
@@ -1359,13 +1359,13 @@ class KBLoaderGUI:
             if event.total > 0:
                 pct = (event.current / event.total) * 100
                 self.progress_bar.configure(value=pct, maximum=100)
-                self.progress_label_var.set(f"{event.current} / {event.total}")
+                self.progress_label_var.set(f"{event.current} / {event.total}  ({pct:.0f}%)")
         elif event.kind == "summary":
             self._log(f"\n{event.message}\n", "info")
 
     def _on_run_complete(self, result):
         self.progress_bar.configure(value=100)
-        self.progress_label_var.set("Done")
+        self.progress_label_var.set("Done  (100%)")
         self.last_log_path = result.log_path
         self.last_run_log_path = result.run_log_path
 
