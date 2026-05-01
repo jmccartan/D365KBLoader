@@ -190,6 +190,10 @@ def run_load(
                 for f in sp_files
             ]
     except Exception as e:
+        from kb_loader.sharepoint_client import SharingLinkResolutionError
+        if isinstance(e, SharingLinkResolutionError):
+            # Let the caller (GUI) handle this with a recovery dialog
+            raise
         emit(ProgressEvent("error", f"Failed to enumerate files: {e}"))
         result.errors = 1
         return result

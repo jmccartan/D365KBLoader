@@ -602,6 +602,134 @@ class KBLoaderGUI:
         dlg.lift()
         dlg.focus_force()
 
+    def _show_sharing_link_recovery_dialog(self, sharing_url: str, message: str):
+        """Shown when a SharePoint sharing link can't be auto-resolved.
+
+        Opens the link in the browser and walks the user through pasting the
+        canonical URL from the address bar back into the SharePoint field.
+        """
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Help me load this folder")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+
+        # Center on parent
+        self.root.update_idletasks()
+        px = self.root.winfo_rootx()
+        py = self.root.winfo_rooty()
+        pw = self.root.winfo_width()
+        ph = self.root.winfo_height()
+        dw, dh = 640, 540
+        dlg.geometry(f"{dw}x{dh}+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+        body = ttk.Frame(dlg, padding=24)
+        body.pack(fill=BOTH, expand=YES)
+
+        ttk.Label(
+            body, text="Let's get the right URL together",
+            font=font_bold(15),
+        ).pack(anchor="w", pady=(0, 4))
+
+        ttk.Label(
+            body,
+            text=(
+                "We tried to auto-resolve your sharing link but couldn't read it "
+                "with your current sign-in. No problem — there's a quick manual fix."
+            ),
+            font=font_regular(10),
+            bootstyle="secondary",
+            wraplength=580,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 14))
+
+        # Step 1
+        step1 = ttk.Labelframe(body, text="  Step 1 — Open the link in your browser  ", padding=12)
+        step1.pack(fill=X, pady=(0, 8))
+        ttk.Label(
+            step1,
+            text=(
+                "Click the button below. Your browser will open to the SharePoint folder."
+            ),
+            font=font_regular(10),
+            justify="left",
+            wraplength=560,
+        ).pack(anchor="w", pady=(0, 8))
+
+        def open_link():
+            import webbrowser
+            try:
+                webbrowser.open(sharing_url)
+                btn.configure(text="Opened — see your browser", bootstyle=SUCCESS)
+            except Exception as e:
+                Messagebox.show_error(f"Could not open browser: {e}", "Error")
+
+        btn = ttk.Button(
+            step1, text="Open link in browser",
+            command=open_link,
+            bootstyle=PRIMARY,
+            width=24,
+        )
+        btn.pack(anchor="w")
+
+        # Step 2
+        step2 = ttk.Labelframe(body, text="  Step 2 — Copy the URL from the address bar  ", padding=12)
+        step2.pack(fill=X, pady=(0, 8))
+        ttk.Label(
+            step2,
+            text=(
+                "After the SharePoint page loads, click the address bar at the top of "
+                "your browser and copy the entire URL (Ctrl+L then Ctrl+C, or ⌘L then ⌘C).\n\n"
+                "It will look something like:\n"
+                "  https://your-tenant.sharepoint.com/sites/SiteName/Shared%20Documents/Folder…"
+            ),
+            font=font_regular(10),
+            justify="left",
+            wraplength=560,
+        ).pack(anchor="w")
+
+        # Step 3
+        step3 = ttk.Labelframe(body, text="  Step 3 — Paste it back here  ", padding=12)
+        step3.pack(fill=X, pady=(0, 8))
+        ttk.Label(
+            step3,
+            text=(
+                "Paste the URL into the SharePoint folder URL field (replacing the "
+                "current value), then click Test Connection again."
+            ),
+            font=font_regular(10),
+            justify="left",
+            wraplength=560,
+        ).pack(anchor="w")
+
+        # Action buttons
+        btn_row = ttk.Frame(body)
+        btn_row.pack(fill=X, pady=(14, 0))
+        ttk.Button(
+            btn_row, text="Got it",
+            command=dlg.destroy,
+            bootstyle=PRIMARY,
+            width=12,
+        ).pack(side=RIGHT)
+        ttk.Button(
+            btn_row, text="Cancel",
+            command=dlg.destroy,
+            bootstyle=(SECONDARY, "outline"),
+            width=12,
+        ).pack(side=RIGHT, padx=(0, 8))
+
+        # Auto-open the link to remove a step
+        try:
+            import webbrowser
+            webbrowser.open(sharing_url)
+            btn.configure(text="Opened — see your browser", bootstyle=SUCCESS)
+        except Exception:
+            pass
+
+        dlg.lift()
+        dlg.attributes("-topmost", True)
+        dlg.after(500, lambda: dlg.attributes("-topmost", False))
+        dlg.focus_force()
+
     def _collect_settings(self) -> Settings:
         """Build a Settings object from the current form values."""
         s = Settings(
@@ -922,7 +1050,11 @@ class KBLoaderGUI:
 
                 self.event_queue.put(("test_done", "ok"))
             except Exception as e:
-                self.event_queue.put(("test_done", f"err:{e}"))
+                from kb_loader.sharepoint_client import SharingLinkResolutionError
+                if isinstance(e, SharingLinkResolutionError):
+                    self.event_queue.put(("sharing_link_error", e.sharing_url, str(e)))
+                else:
+                    self.event_queue.put(("test_done", f"err:{e}"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1020,7 +1152,11 @@ class KBLoaderGUI:
                 self.event_queue.put(("run_done", result))
             except Exception as e:
                 logger.exception("Run failed")
-                self.event_queue.put(("run_failed", str(e)))
+                from kb_loader.sharepoint_client import SharingLinkResolutionError
+                if isinstance(e, SharingLinkResolutionError):
+                    self.event_queue.put(("sharing_link_error", e.sharing_url, str(e)))
+                else:
+                    self.event_queue.put(("run_failed", str(e)))
 
         self.worker_thread = threading.Thread(target=worker, daemon=True)
         self.worker_thread.start()
@@ -1100,6 +1236,14 @@ class KBLoaderGUI:
             self._set_status("Sign-in failed.")
             Messagebox.show_error(err, "Sign-in failed")
             self._set_buttons_enabled(True)
+        elif kind == "sharing_link_error":
+            _, sharing_url, message = event
+            self._dismiss_device_code_dialog()
+            self._log(f"⚠ {message}\n", "warning")
+            self._set_status("Couldn't auto-resolve sharing link.")
+            self._set_buttons_enabled(True)
+            self._refresh_auth_status()
+            self._show_sharing_link_recovery_dialog(sharing_url, message)
         elif kind == "test_done":
             outcome = event[1]
             self._dismiss_device_code_dialog()

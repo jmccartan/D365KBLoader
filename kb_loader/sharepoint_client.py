@@ -20,6 +20,18 @@ MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2
 
 
+class SharingLinkResolutionError(Exception):
+    """Raised when a SharePoint sharing link can't be auto-resolved.
+
+    The GUI catches this specifically to show a one-click recovery dialog
+    that opens the link in the browser so the user can copy the canonical
+    URL from the address bar.
+    """
+    def __init__(self, sharing_url: str, message: str):
+        super().__init__(message)
+        self.sharing_url = sharing_url
+
+
 @dataclass
 class SharePointFile:
     """Represents a Word file (.docx or .doc) found in SharePoint."""
@@ -113,84 +125,6 @@ class SharePointClient:
         name = data.get("name", "(folder)")
         logger.info(f"Resolved sharing link via Graph /shares → {name} (drive: {drive_id}, item: {item_id})")
         return drive_id, item_id
-
-    def _resolve_sharing_link_via_redirect(self, folder_url: str) -> str:
-        """Follow a SharePoint sharing-link redirect to its canonical folder URL.
-
-        Used as a fallback when Graph's /shares endpoint can't be called with
-        the available token (e.g. az CLI tokens that lack Files.Read.All
-        delegated scope). The returned URL is a browser-style /Forms/AllItems.aspx?id=
-        URL that our existing parser can handle.
-        """
-        parsed = urlparse(folder_url)
-        hostname = parsed.hostname
-        if not hostname:
-            raise ValueError(f"Invalid SharePoint URL: {folder_url}")
-
-        sp_token = self.auth.get_sharepoint_token(hostname)
-        headers = {
-            "Authorization": f"Bearer {sp_token}",
-            "Accept": "text/html,application/xhtml+xml",
-        }
-        try:
-            resp = self.session.get(
-                folder_url, headers=headers, allow_redirects=True, timeout=30,
-            )
-        except requests.RequestException as e:
-            raise ValueError(
-                f"Could not reach SharePoint to resolve the sharing link.\n"
-                f"Detail: {e}"
-            )
-
-        if resp.status_code in (401, 403):
-            raise ValueError(
-                "You don't have access to this SharePoint folder.\n"
-                "Ask the owner to grant you access, or use a folder URL "
-                "from a site you can already open."
-            )
-        if resp.status_code == 404:
-            raise ValueError(
-                "This SharePoint sharing link couldn't be resolved.\n"
-                "It may have expired, been revoked, or the file may have moved.\n"
-                "Try opening the link in your browser to verify it still works,\n"
-                "then copy the URL from the address bar after the page loads."
-            )
-        if resp.status_code >= 400:
-            raise ValueError(
-                f"SharePoint returned HTTP {resp.status_code} when resolving the sharing link."
-            )
-
-        final_url = resp.url
-        logger.info(f"Resolved sharing link via redirect → {final_url}")
-
-        # Detect failure modes
-        final_parsed = urlparse(final_url)
-        original_parsed = urlparse(folder_url)
-
-        if final_url == folder_url:
-            raise ValueError(
-                "SharePoint did not redirect to a folder. This usually means the "
-                "sharing link could not be resolved with the current sign-in.\n"
-                "Try copying the URL straight from the SharePoint address bar instead."
-            )
-
-        # If we ended up at a login page, auth didn't work
-        if final_parsed.hostname and "login.microsoftonline.com" in final_parsed.hostname:
-            raise ValueError(
-                "SharePoint redirected to the sign-in page — the current "
-                "authentication can't access this folder.\n"
-                "Try signing out and signing back in, or use a folder URL "
-                "from your browser address bar instead."
-            )
-
-        # If we ended up on a different host, that's also unexpected
-        if final_parsed.hostname != original_parsed.hostname:
-            raise ValueError(
-                f"Sharing link resolved to an unexpected host: {final_parsed.hostname}\n"
-                f"Try using the URL from your browser address bar instead."
-            )
-
-        return final_url
 
     def _parse_sharepoint_url(self, folder_url: str) -> tuple[str, str, str, str]:
         """Parse a direct SharePoint folder URL into (hostname, site_path, library_name, folder_path).
@@ -362,62 +296,32 @@ class SharePointClient:
         return files
 
     def _resolve_sharing_link_with_fallback(self, folder_url: str) -> tuple[str, str]:
-        """Try Graph /shares first, fall back to redirect-following.
+        """Try Graph /shares to resolve a sharing link.
 
-        Returns (drive_id, item_id) of the shared folder.
+        On failure, raises SharingLinkResolutionError so the GUI can show a
+        one-click recovery dialog that opens the link in the browser for the
+        user to copy the canonical URL.
+
+        Returns (drive_id, item_id) of the shared folder on success.
         """
-        # Try Graph /shares (fast path)
-        graph_error: Optional[Exception] = None
         try:
             logger.info("Resolving SharePoint sharing link via Graph /shares…")
             return self._resolve_sharing_link(folder_url)
         except requests.HTTPError as e:
             status = e.response.status_code if e.response is not None else "?"
-            graph_error = e
-            if status in (401, 403):
-                logger.info(
-                    f"Graph /shares returned {status} — falling back to redirect resolution"
-                )
-            elif status == 404:
-                # 404 here usually means the encoded URL didn't match a share record,
-                # which can happen with some link variants. Worth trying redirect too.
-                logger.info(f"Graph /shares returned 404 — falling back to redirect resolution")
-            else:
-                # For other HTTP errors, surface a friendly message
-                raise ValueError(
-                    f"SharePoint returned HTTP {status} when resolving the sharing link."
-                )
-        except ValueError:
-            # Already a friendly error from _resolve_sharing_link — re-raise as is
-            raise
-
-        # Fallback: follow the redirect to a canonical URL, then use the regular parser
-        try:
-            canonical_url = self._resolve_sharing_link_via_redirect(folder_url)
-        except ValueError:
-            raise
-        except Exception as e:
-            raise ValueError(
-                f"Could not resolve SharePoint sharing link.\n"
-                f"Graph attempt: {graph_error}\n"
-                f"Redirect attempt: {e}"
+            logger.info(f"Graph /shares returned HTTP {status}")
+            raise SharingLinkResolutionError(
+                folder_url,
+                f"Couldn't auto-read the SharePoint sharing link (HTTP {status}).\n\n"
+                "This usually means your sign-in doesn't carry the Graph "
+                "permission needed for sharing-link resolution — even though "
+                "you can open the folder in SharePoint.\n\n"
+                "Easy fix: paste the URL straight from your browser address bar.\n"
+                "Click 'Open in browser' below to do that quickly.",
             )
-
-        # Parse the canonical URL
-        try:
-            hostname, site_path, library_name, folder_path = self._parse_sharepoint_url(canonical_url)
         except ValueError as e:
-            raise ValueError(
-                f"Resolved the sharing link to a URL we don't know how to parse.\n"
-                f"Resolved URL: {canonical_url}\n"
-                f"Detail: {e}"
-            )
-
-        logger.info(f"Resolving SharePoint site: {hostname}/{site_path}")
-        site_id = self._resolve_site_id(hostname, site_path)
-        drive_id = self._resolve_drive(site_id, library_name)
-        root_item_id = self._resolve_folder_item(drive_id, folder_path)
-        return drive_id, root_item_id
+            # Already a friendly error from _resolve_sharing_link
+            raise SharingLinkResolutionError(folder_url, str(e))
 
     def _recurse_folder(
         self, drive_id: str, item_id: str | None, relative_path: str, results: list[SharePointFile]
