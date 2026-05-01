@@ -151,11 +151,23 @@ Your Microsoft account needs:
 
 ---
 
-## Run logs
+## What goes in the output folder
 
-Every run produces two files in your output folder:
+Everything writes to the **single output folder** you choose (default: `./output`):
 
-- **`kb_loader_YYYYMMDD_HHMMSS.log`** — detailed log with every step (great for troubleshooting)
+```
+output/
+├── 📁 KB Main Folder/                                ← matches your source structure
+│   ├── 📁 Dynamic Rebooking Tool/
+│   │   ├── 📄 Customer Accepts Auto Reaccommodated Flight….html
+│   │   └── 📄 Customer Rebooks to Finnair….html
+│   └── 📄 Refund Policy.html
+├── 📄 kb_loader_20260501_080100.log                  ← detail log (per run)
+└── 📄 kb_loader_log_20260501_080100.xlsx             ← Excel run log (per run)
+```
+
+- **HTML files** — one per Word document, in subfolders matching the source folder structure. Empty documents are skipped (no HTML written).
+- **`kb_loader_YYYYMMDD_HHMMSS.log`** — full timestamped log with every step (great for troubleshooting)
 - **`kb_loader_log_YYYYMMDD_HHMMSS.xlsx`** — Excel summary with one row per file:
 
 | Column | Description |
@@ -171,6 +183,8 @@ Every run produces two files in your output folder:
 | Error | Error message if processing failed |
 
 Cells are color-coded (green = yes, red = no, yellow = skipped). The Excel file also includes a **before/after KB article count comparison** at the top.
+
+> Click **Open output folder** in the GUI to jump straight to it. The live output area also tells you how many HTML files / logs are currently there.
 
 ---
 

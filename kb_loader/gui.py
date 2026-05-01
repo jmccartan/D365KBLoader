@@ -319,7 +319,7 @@ class KBLoaderGUI:
         ).grid(row=3, column=2, sticky="e", pady=(0, 2))
         ttk.Label(
             settings_card,
-            text="HTML files and run logs are written here",
+            text="HTML files (in subfolders), detail .log, and Excel run log all land here",
             font=font_regular(9),
             bootstyle="secondary",
         ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 10))
@@ -1035,8 +1035,28 @@ class KBLoaderGUI:
 
     def _open_output_folder(self):
         s = self._collect_settings()
-        out = Path(s.output_dir or "./output")
+        out = Path(s.output_dir or "./output").resolve()
         out.mkdir(parents=True, exist_ok=True)
+
+        # Inventory what's there so the user sees what to expect
+        html_count = sum(1 for p in out.rglob("*.html"))
+        log_count = sum(1 for p in out.glob("kb_loader_*.log"))
+        xlsx_count = sum(1 for p in out.glob("kb_loader_log_*.xlsx"))
+
+        if html_count + log_count + xlsx_count == 0:
+            self._log(
+                f"Output folder: {out}\n"
+                f"  (empty — files appear here after a Dry Run or Run)\n",
+                "muted",
+            )
+        else:
+            self._log(
+                f"Output folder: {out}\n"
+                f"  Contains: {html_count} HTML file(s), "
+                f"{log_count} detail log(s), {xlsx_count} run log(s)\n",
+                "muted",
+            )
+        self._set_status(f"Opened {out}")
         _open_path_in_explorer(out)
 
     # ── Event pump (drains worker queue) ──────────────────────────────
