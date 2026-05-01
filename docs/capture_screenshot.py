@@ -1,9 +1,8 @@
-"""Capture a screenshot of the GUI for the README.
+"""Capture a screenshot of the GUI for the README, with sanitized demo values.
 
-Launches the GUI, waits for layout to settle, takes a screenshot of the window
-region, then closes. Saves to docs/screenshot.png.
+Launches the GUI with placeholder URLs/email so the screenshot doesn't leak
+real tenant info, takes a screenshot, then closes. Saves to docs/screenshot.png.
 """
-import sys
 import time
 from pathlib import Path
 
@@ -16,7 +15,20 @@ _enable_windows_dpi_awareness()
 root = ttk.Window(themename=DEFAULT_THEME)
 gui = KBLoaderGUI(root)
 
-# Add some sample log content so the screenshot looks more useful
+# Sanitize displayed values so the screenshot doesn't leak real tenant info
+gui.dataverse_var.set("https://contoso.crm.dynamics.com/")
+gui.sharepoint_var.set("https://contoso.sharepoint.com/sites/KnowledgeBase/Shared Documents/KB Articles")
+gui.output_var.set("./output")
+gui.source_mode_var.set("sharepoint")
+gui._on_source_mode_change()
+
+# Force a clean signed-in indicator with a placeholder identity
+gui.auth_icon_var.set("●")
+gui.auth_icon.configure(bootstyle="success")
+gui.auth_status_var.set("Signed in: kb-admin@contoso.onmicrosoft.com")
+gui.auth_method_var.set("via msal")
+
+# Sample live log
 gui._log("✓ Settings loaded.\n", "success")
 gui._log("Ready to test connection or run a load.\n", "info")
 gui._log("\n[Hint] Click 'Test Connection' first to verify everything works.\n", "muted")
@@ -27,13 +39,11 @@ root.update()
 time.sleep(0.5)
 root.update()
 
-# Get window bounds
 x = root.winfo_rootx()
 y = root.winfo_rooty()
 w = root.winfo_width()
 h = root.winfo_height()
 
-# Capture some space around the title bar too
 title_bar_height = 32
 img = ImageGrab.grab(bbox=(x - 2, y - title_bar_height, x + w + 2, y + h + 2))
 
