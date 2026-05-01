@@ -227,21 +227,42 @@ class SharePointClient:
         """Find the drive ID for a document library by name."""
         url = f"{GRAPH_BASE}/sites/{site_id}/drives"
         data = self._get(url)
+        drives = data.get("value", [])
 
-        for drive in data.get("value", []):
+        for drive in drives:
             if drive["name"].lower() == library_name.lower():
                 logger.info(f"Resolved drive '{library_name}' → {drive['id']}")
                 return drive["id"]
 
         # Fallback: try matching on webUrl containing the library name
-        for drive in data.get("value", []):
+        for drive in drives:
             if library_name.lower().replace(" ", "%20") in drive.get("webUrl", "").lower():
                 logger.info(f"Resolved drive via webUrl match '{library_name}' → {drive['id']}")
                 return drive["id"]
 
-        available = [d["name"] for d in data.get("value", [])]
+        if not drives:
+            # Site exists but no drives are visible to the user. This typically
+            # means the user's account isn't a direct member of the site (they
+            # may only have access via a sharing link, which isn't enough for
+            # Graph to enumerate the site's contents).
+            site_path = data.get("@odata.context", "").rsplit("/", 1)[-1]
+            raise ValueError(
+                "The SharePoint site was found, but no document libraries are visible "
+                "to your account.\n\n"
+                "This usually means you can OPEN the folder in your browser (e.g. via a "
+                "sharing link), but your Microsoft account isn't a direct member of the site.\n\n"
+                "How to fix:\n"
+                "  • Ask the site owner to add you as a Member of the site (not just share a link), OR\n"
+                "  • Use a SharePoint folder where your account already has direct membership, OR\n"
+                "  • OneDrive-sync the folder to your computer and switch to 'Local folder' mode.\n\n"
+                f"Looking for library: '{library_name}'  (no libraries visible)"
+            )
+
+        available = [d["name"] for d in drives]
         raise ValueError(
-            f"Document library '{library_name}' not found. Available libraries: {available}"
+            f"Document library '{library_name}' not found in this site.\n"
+            f"Available libraries: {', '.join(available)}\n\n"
+            f"Check the spelling of the URL, or pick a folder from one of the listed libraries."
         )
 
     def _resolve_folder_item(self, drive_id: str, folder_path: str) -> str | None:
