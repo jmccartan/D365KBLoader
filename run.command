@@ -35,9 +35,10 @@ if [ ! -x ".venv/bin/python" ]; then
   echo
   "$PY" -m venv .venv
   source .venv/bin/activate
-  echo "  Installing dependencies..."
-  python -m pip install --upgrade pip
-  pip install -r requirements.txt
+  echo "  Upgrading pip..."
+  python -m pip install --upgrade pip setuptools wheel
+  echo "  Installing dependencies (using prebuilt wheels)..."
+  pip install --prefer-binary -r requirements.txt
 else
   source .venv/bin/activate
 fi

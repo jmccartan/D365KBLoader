@@ -44,9 +44,10 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
   )
   call .venv\Scripts\activate.bat
-  echo  Installing dependencies...
-  python -m pip install --upgrade pip
-  pip install -r requirements.txt
+  echo  Upgrading pip...
+  python -m pip install --upgrade pip setuptools wheel
+  echo  Installing dependencies (using prebuilt wheels)...
+  pip install --prefer-binary -r requirements.txt
   if errorlevel 1 (
     echo.
     echo  Failed to install dependencies. See the error above.
