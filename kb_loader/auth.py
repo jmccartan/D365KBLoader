@@ -364,6 +364,17 @@ class AuthClient:
             return self._get_token_msal([f"{resource}/user_impersonation"])
         return self._get_token_az(resource)
 
+    def get_sharepoint_token(self, hostname: str) -> str:
+        """Get an access token for the SharePoint REST API on a specific tenant host.
+
+        Used to resolve sharing links by following SharePoint's redirect, when
+        Microsoft Graph's /shares endpoint can't be used with the available scope.
+        """
+        resource = f"https://{hostname.rstrip('/')}"
+        if self._method == "msal":
+            return self._get_token_msal([f"{resource}/AllSites.Read"])
+        return self._get_token_az(resource)
+
     def get_signed_in_user(self) -> str | None:
         """Return the username/email of the signed-in user, or None if not signed in."""
         if self._method == "msal":
