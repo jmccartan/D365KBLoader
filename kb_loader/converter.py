@@ -64,12 +64,15 @@ def _convert_doc_to_docx(doc_bytes: bytes) -> bytes:
 
 
 def convert_to_html(file_bytes: bytes, file_name: str) -> tuple[str, list[str]]:
-    """Convert a .docx or .doc file (as bytes) to HTML.
+    """Convert a .docx or .doc file (as bytes) to HTML with inline D365 styles.
 
     For .doc files, converts to .docx via LibreOffice first, then uses mammoth.
+    The mammoth output is then post-processed to add inline styles compatible
+    with the D365 Knowledge Article rich-text editor (which strips <style>
+    blocks).
 
     Returns:
-        (html_content, warnings) - the HTML string and any conversion warnings.
+        (html_content, warnings) - the styled HTML string and any conversion warnings.
     """
     ext = Path(file_name).suffix.lower()
 
@@ -84,8 +87,18 @@ def convert_to_html(file_bytes: bytes, file_name: str) -> tuple[str, list[str]]:
         for msg in result.messages:
             logger.warning(f"Conversion warning: {msg}")
 
+    raw_html = result.value
     warnings = [str(m) for m in result.messages]
-    return result.value, warnings
+
+    # Apply consistent inline styling for D365 KB articles
+    try:
+        from kb_loader.styles import style_html
+        styled = style_html(raw_html)
+    except Exception as e:
+        logger.warning(f"Could not apply inline styles: {e} — using raw mammoth output")
+        styled = raw_html
+
+    return styled, warnings
 
 
 def save_html_file(html: str, output_dir: str, relative_path: str, original_name: str) -> Path:
