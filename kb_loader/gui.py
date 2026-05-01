@@ -130,6 +130,7 @@ class KBLoaderGUI:
         self.worker_thread: Optional[threading.Thread] = None
         self.last_log_path: Optional[Path] = None
         self.last_run_log_path: Optional[Path] = None
+        self._device_code_dialog: Optional[tk.Toplevel] = None
 
         self._build_ui()
         self._refresh_auth_status()
@@ -589,7 +590,16 @@ class KBLoaderGUI:
                     "Tip: Install Azure CLI and run `az login`, "
                     "or set AZURE_CLIENT_ID via the developer .env file."
                 )
+            # Wire up device-code flow so sign-in is visible in the GUI
+            # instead of relying on a browser window that may pop up behind
+            # other apps.
+            self.auth.set_device_code_callback(self._on_device_code)
         return self.auth
+
+    def _on_device_code(self, code: str, url: str):
+        """Called from the auth worker thread when az emits a device code.
+        Marshal to the UI thread via the event queue."""
+        self.event_queue.put(("device_code", code, url))
 
     def _refresh_auth_status(self):
         """Update the auth indicator label."""
@@ -603,10 +613,129 @@ class KBLoaderGUI:
         except RuntimeError as e:
             self._set_auth_indicator("error", error=str(e))
 
+    # ── Device-code sign-in dialog ────────────────────────────────────
+
+    def _show_device_code_dialog(self, code: str, url: str):
+        """Display the device-code sign-in instructions in a prominent modal."""
+        # If a previous dialog is still around, close it
+        self._dismiss_device_code_dialog()
+
+        dlg = tk.Toplevel(self.root)
+        self._device_code_dialog = dlg
+        dlg.title("Sign in to Microsoft")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.protocol("WM_DELETE_WINDOW", self._dismiss_device_code_dialog)
+
+        # Center on parent window
+        self.root.update_idletasks()
+        px = self.root.winfo_rootx()
+        py = self.root.winfo_rooty()
+        pw = self.root.winfo_width()
+        ph = self.root.winfo_height()
+        dw, dh = 520, 320
+        dlg.geometry(f"{dw}x{dh}+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+        body = ttk.Frame(dlg, padding=24)
+        body.pack(fill=BOTH, expand=YES)
+
+        ttk.Label(
+            body, text="Sign in to Microsoft",
+            font=font_bold(16),
+        ).pack(anchor="w")
+
+        ttk.Label(
+            body,
+            text="A browser window should open automatically. Sign in with your\n"
+                 "Microsoft account, and enter the code below when prompted.",
+            font=font_regular(10),
+            bootstyle="secondary",
+            justify="left",
+        ).pack(anchor="w", pady=(6, 16))
+
+        # Big code box
+        code_frame = ttk.Frame(body, bootstyle="primary")
+        code_frame.pack(fill=X, pady=(0, 12))
+        code_label = ttk.Label(
+            code_frame, text=code,
+            font=font_mono(28, bold=True),
+            bootstyle="inverse-primary",
+            anchor="center", padding=(20, 16),
+        )
+        code_label.pack(fill=X)
+
+        # Buttons row
+        btn_row = ttk.Frame(body)
+        btn_row.pack(fill=X, pady=(0, 8))
+
+        def copy_code():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(code)
+            copy_btn.configure(text="Copied!")
+            self.root.after(1500, lambda: copy_btn.configure(text="Copy code"))
+
+        def open_browser():
+            import webbrowser
+            try:
+                webbrowser.open(url)
+            except Exception as e:
+                logger.warning(f"Could not open browser: {e}")
+
+        copy_btn = ttk.Button(
+            btn_row, text="Copy code",
+            command=copy_code,
+            bootstyle=(SECONDARY, "outline"),
+            width=14,
+        )
+        copy_btn.pack(side=LEFT, padx=(0, 8))
+
+        ttk.Button(
+            btn_row, text="Open sign-in page",
+            command=open_browser,
+            bootstyle=PRIMARY,
+            width=22,
+        ).pack(side=LEFT)
+
+        ttk.Label(
+            body,
+            text=f"URL: {url}",
+            font=font_regular(9),
+            bootstyle="secondary",
+        ).pack(anchor="w", pady=(8, 0))
+
+        ttk.Label(
+            body,
+            text="This dialog will close automatically once sign-in completes.",
+            font=font_regular(9),
+            bootstyle="secondary",
+        ).pack(anchor="w", pady=(4, 0))
+
+        # Bring it to front
+        dlg.lift()
+        dlg.attributes("-topmost", True)
+        dlg.after(500, lambda: dlg.attributes("-topmost", False))
+        dlg.focus_force()
+
+        # Auto-open the browser so the user doesn't have to hunt for the URL
+        open_browser()
+
+        # Also drop a line into the live log so it's not lost
+        self._log(f"\nSign-in code: {code}\n", "bold")
+        self._log(f"Sign-in URL:  {url}\n\n", "muted")
+
+    def _dismiss_device_code_dialog(self):
+        """Close the device-code dialog if it's open."""
+        if self._device_code_dialog is not None:
+            try:
+                self._device_code_dialog.destroy()
+            except Exception:
+                pass
+            self._device_code_dialog = None
+
     def _on_signin(self):
         """Trigger interactive sign-in by acquiring a Graph token."""
-        self._set_status("Signing in — check your browser…")
-        self._log("Signing in…\n", "info")
+        self._set_status("Signing in — a sign-in code will appear shortly…")
+        self._log("Starting sign-in…\n", "info")
 
         def worker():
             try:
@@ -833,8 +962,12 @@ class KBLoaderGUI:
         elif kind == "log_block":
             _, msg, tag = event
             self._log(msg, tag)
+        elif kind == "device_code":
+            _, code, url = event
+            self._show_device_code_dialog(code, url)
         elif kind == "auth_ok":
             user = event[1]
+            self._dismiss_device_code_dialog()
             self._refresh_auth_status()
             if user:
                 self._log(f"✓ Signed in as {user}\n", "success")
@@ -845,12 +978,14 @@ class KBLoaderGUI:
             self._set_buttons_enabled(True)
         elif kind == "auth_err":
             err = event[1]
+            self._dismiss_device_code_dialog()
             self._log(f"✗ Sign-in failed: {err}\n", "error")
             self._set_status("Sign-in failed.")
             Messagebox.show_error(err, "Sign-in failed")
             self._set_buttons_enabled(True)
         elif kind == "test_done":
             outcome = event[1]
+            self._dismiss_device_code_dialog()
             if outcome == "ok":
                 self._log("✓ Connection test passed.\n", "success")
                 self._set_status("Connection OK.")
@@ -862,16 +997,19 @@ class KBLoaderGUI:
             self._set_buttons_enabled(True)
             self._refresh_auth_status()
         elif kind == "status_done":
+            self._dismiss_device_code_dialog()
             self._set_status(event[1])
             self._set_buttons_enabled(True)
             self._refresh_auth_status()
         elif kind == "progress_event":
             self._render_progress_event(event[1])
         elif kind == "run_done":
+            self._dismiss_device_code_dialog()
             result = event[1]
             self._on_run_complete(result)
         elif kind == "run_failed":
             err = event[1]
+            self._dismiss_device_code_dialog()
             self._log(f"\n✗ Run failed: {err}\n", "error")
             self._set_status("Run failed.")
             Messagebox.show_error(err, "Run failed")

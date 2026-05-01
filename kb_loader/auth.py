@@ -12,6 +12,9 @@ Public API:
   .get_dataverse_token(dataverse_url)
   .get_signed_in_user() -> str | None
   .sign_out()
+  .set_device_code_callback(cb) — when set, az login uses device-code flow and
+    invokes cb(code, url) so the UI can display the code prominently. Otherwise
+    az login uses its default interactive browser flow.
 """
 
 import json
@@ -23,6 +26,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,9 @@ _GRAPH_SCOPES = [
     "https://graph.microsoft.com/Files.Read.All",
 ]
 
+# DeviceCodeCallback receives (code, sign_in_url)
+DeviceCodeCallback = Callable[[str, str], None]
+
 
 class AuthClient:
     """Manages authentication tokens via MSAL or Azure CLI."""
@@ -46,6 +53,7 @@ class AuthClient:
         self._token_expiry: dict[str, float] = {}
         self._msal_app = None
         self._msal_cache = None
+        self._device_code_callback: Optional[DeviceCodeCallback] = None
 
         # Allow constructor args; fall back to environment variables for back-compat
         self._client_id = client_id or os.environ.get("AZURE_CLIENT_ID", "")
@@ -189,7 +197,15 @@ class AuthClient:
         return match.group(1) if match else ""
 
     def _login_az(self, resource: str | None = None):
-        """Run interactive az login, optionally scoped to a resource."""
+        """Run az login. Uses device-code flow if a callback is registered, else
+        falls back to az's default interactive browser flow."""
+        if self._device_code_callback is not None:
+            self._login_az_device_code(resource)
+        else:
+            self._login_az_interactive(resource)
+
+    def _login_az_interactive(self, resource: str | None = None):
+        """Run az's default interactive browser login."""
         cmd = ["az", "login", "--allow-no-subscriptions"]
         if self._tenant_id:
             cmd.extend(["--tenant", self._tenant_id])
@@ -202,6 +218,79 @@ class AuthClient:
             raise RuntimeError(
                 "Sign-in was cancelled or failed. "
                 "Try clicking Sign In again."
+            )
+
+    def _login_az_device_code(self, resource: str | None = None):
+        """Run az login with --use-device-code, parse the code from stdout, and
+        invoke the registered callback so the UI can display it prominently."""
+        cmd = ["az", "login", "--use-device-code", "--allow-no-subscriptions"]
+        if self._tenant_id:
+            cmd.extend(["--tenant", self._tenant_id])
+        if resource:
+            cmd.extend(["--scope", f"{resource.rstrip('/')}/.default"])
+        cmd.extend(["--output", "none"])
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            shell=_WINDOWS,
+            bufsize=1,
+        )
+
+        # Match az output like:
+        #   "To sign in, use a web browser to open the page https://microsoft.com/devicelogin
+        #    and enter the code ABC123XYZ to authenticate."
+        code_pattern = re.compile(
+            r"open the page\s+(\S+)\s+and enter the code\s+(\S+)",
+            re.IGNORECASE,
+        )
+        code_emitted = False
+        captured_lines: list[str] = []
+        start = time.time()
+        TIMEOUT = 600  # 10 minutes for the user to enter the code
+
+        try:
+            while True:
+                if proc.stdout is None:
+                    break
+                line = proc.stdout.readline()
+                if line:
+                    captured_lines.append(line)
+                    if not code_emitted:
+                        m = code_pattern.search(line)
+                        if m:
+                            url, code = m.group(1), m.group(2)
+                            try:
+                                self._device_code_callback(code, url)
+                            except Exception as cb_err:
+                                logger.warning(f"Device code callback error: {cb_err}")
+                            code_emitted = True
+                if proc.poll() is not None:
+                    # process exited — drain any remaining output
+                    if proc.stdout is not None:
+                        rest = proc.stdout.read()
+                        if rest:
+                            captured_lines.append(rest)
+                    break
+                if time.time() - start > TIMEOUT:
+                    proc.kill()
+                    raise RuntimeError(
+                        "Sign-in timed out (10 minutes). "
+                        "Click Sign In again to retry."
+                    )
+        finally:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        if proc.returncode != 0:
+            output = "".join(captured_lines).strip()
+            raise RuntimeError(
+                "Sign-in failed. Click Sign In again to retry.\n"
+                f"Detail: {output[-500:]}" if output else "Sign-in failed. Click Sign In again to retry."
             )
 
     def _get_token_az(self, resource: str) -> str:
@@ -313,4 +402,16 @@ class AuthClient:
     def method(self) -> str:
         """Current auth method: 'msal' or 'az_cli'."""
         return self._method
+
+    def set_device_code_callback(self, cb: Optional[DeviceCodeCallback]):
+        """Register a callback to receive device-code sign-in info.
+
+        When set (non-None), az CLI sign-in uses --use-device-code flow:
+        the callback is invoked with (code, sign_in_url) so the UI can
+        prominently display the code instead of relying on a browser
+        window that might be hidden behind other apps.
+
+        Set to None to revert to az's default interactive browser flow.
+        """
+        self._device_code_callback = cb
 

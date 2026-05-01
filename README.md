@@ -129,10 +129,18 @@ The app supports two authentication methods, chosen automatically:
 
 | Method | When it's used | Setup |
 |--------|----------------|-------|
-| **Azure CLI** *(default)* | When `az` is installed on your machine | Run `az login` once in a terminal. Your existing session is reused. |
+| **Azure CLI** *(default)* | When `az` is installed on your machine | Run `az login` once in a terminal — or just click Sign In in the app |
 | **MSAL** *(fallback)* | When `AZURE_CLIENT_ID` is set in `.env` | An IT admin registers a public client app once in Entra ID. No Azure subscription required. |
 
-Both methods open a browser window for sign-in on first use, then cache tokens for future runs (24 hours typically).
+When you click **Sign In** in the GUI, a dialog appears showing a **device-code** like `F7Q3K9MAJ`:
+
+![Sign-in dialog](docs/screenshot_signin.png)
+
+The browser opens automatically to https://microsoft.com/devicelogin — paste the code there and sign in with your Microsoft account. The dialog closes automatically once sign-in completes.
+
+> **Why a code instead of a popup?** Browser-based sign-in windows often get hidden behind other apps. The device-code flow is more reliable because the code is always visible right in the app.
+
+Both methods cache tokens for future runs (24 hours typically).
 
 ### Required permissions
 
