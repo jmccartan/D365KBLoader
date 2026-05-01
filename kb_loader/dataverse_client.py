@@ -105,7 +105,7 @@ class DataverseClient:
             return self._language_id
 
         url = self._api(
-            f"languagelocales?$filter=localeid eq {ENGLISH_LOCALE_ID}&$select=languagelocaleid"
+            f"languagelocale?$filter=localeid eq {ENGLISH_LOCALE_ID}&$select=languagelocaleid"
         )
         resp = self._request("GET", url)
         resp.raise_for_status()
@@ -159,7 +159,7 @@ class DataverseClient:
             "content": html_content,
             "keywords": source_path,
             "description": f"Auto-imported from SharePoint: {source_path}",
-            "languagelocaleid@odata.bind": f"/languagelocales({language_id})",
+            "languagelocaleid@odata.bind": f"/languagelocale({language_id})",
             "isrootarticle": False,
             "createdon": datetime.now(timezone.utc).isoformat(),
             # Manual creation mode
