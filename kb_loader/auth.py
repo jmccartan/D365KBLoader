@@ -35,6 +35,14 @@ _WINDOWS = platform.system() == "Windows"
 _CACHE_DIR = Path.home() / ".d365kbloader"
 _TOKEN_CACHE_FILE = _CACHE_DIR / "msal_token_cache.json"
 
+# Default public client app ID — Microsoft Graph PowerShell SDK.
+# This well-known Microsoft public client has Sites.Read.All / Files.Read.All
+# pre-authorized so users can sign in interactively and immediately get the
+# scopes needed for SharePoint enumeration. No tenant-side app registration
+# is required. Users in tenants that block this app can override via
+# AZURE_CLIENT_ID in their settings.
+DEFAULT_PUBLIC_CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+
 # Graph scopes needed for SharePoint file enumeration and download
 _GRAPH_SCOPES = [
     "https://graph.microsoft.com/Sites.Read.All",
@@ -46,7 +54,20 @@ DeviceCodeCallback = Callable[[str, str], None]
 
 
 class AuthClient:
-    """Manages authentication tokens via MSAL or Azure CLI."""
+    """Hybrid authentication: MSAL for Graph (proper Files scope) + Azure CLI for Dataverse.
+
+    The default flow:
+      - Graph (SharePoint enumeration): MSAL with the Microsoft Graph PowerShell
+        public client ID, which has Sites.Read.All + Files.Read.All pre-authorized.
+        Users sign in once via device code and get a token that can actually list
+        document libraries — unlike az CLI's Graph token which is restricted to
+        Sites.Read.All only.
+      - Dataverse: Azure CLI tokens, which work reliably for Dataverse Web API.
+
+    Users in environments where MSAL doesn't work (e.g., tenant policy blocks
+    the default public client) can opt into az-only by setting the env var
+    KB_LOADER_AUTH=az_cli, or override the client ID via AZURE_CLIENT_ID.
+    """
 
     def __init__(self, client_id: str = "", tenant_id: str = ""):
         self._tokens: dict[str, str] = {}
@@ -55,20 +76,32 @@ class AuthClient:
         self._msal_cache = None
         self._device_code_callback: Optional[DeviceCodeCallback] = None
 
-        # Allow constructor args; fall back to environment variables for back-compat
-        self._client_id = client_id or os.environ.get("AZURE_CLIENT_ID", "")
+        # Allow constructor args, fall back to environment, then to the default
+        # Microsoft Graph PowerShell client ID. The default works for any user
+        # in any tenant without app registration.
+        self._client_id = (
+            client_id
+            or os.environ.get("AZURE_CLIENT_ID", "")
+            or DEFAULT_PUBLIC_CLIENT_ID
+        )
         self._tenant_id = tenant_id or os.environ.get("AZURE_TENANT_ID", "")
 
-        if self._client_id:
+        # Force-use az CLI for everything if the user explicitly opts in
+        force_az = os.environ.get("KB_LOADER_AUTH", "").lower() == "az_cli"
+
+        # Always make sure az CLI is available — Dataverse uses it
+        self._ensure_az_cli()
+        if not self._tenant_id:
+            self._tenant_id = self._detect_tenant_az()
+            if self._tenant_id:
+                logger.info(f"Auto-detected tenant: {self._tenant_id}")
+
+        if force_az:
+            self._method = "az_cli"
+        else:
+            # Default: hybrid — MSAL for Graph, az CLI for Dataverse.
             self._method = "msal"
             self._init_msal()
-        else:
-            self._method = "az_cli"
-            self._ensure_az_cli()
-            if not self._tenant_id:
-                self._tenant_id = self._detect_tenant_az()
-                if self._tenant_id:
-                    logger.info(f"Auto-detected tenant: {self._tenant_id}")
 
     # ── MSAL interactive auth ──────────────────────────────────────────
 
@@ -119,7 +152,8 @@ class AuthClient:
             _TOKEN_CACHE_FILE.write_text(self._msal_cache.serialize())
 
     def _get_token_msal(self, scopes: list[str]) -> str:
-        """Acquire token via MSAL — silent first, then interactive browser."""
+        """Acquire token via MSAL — silent first, then interactive (device code if a callback
+        is registered, otherwise browser interactive)."""
         accounts = self._msal_app.get_accounts()
         result = None
 
@@ -127,13 +161,32 @@ class AuthClient:
             result = self._msal_app.acquire_token_silent(scopes, account=accounts[0])
 
         if not result or "access_token" not in result:
-            logger.info("Opening browser for sign-in...")
-            result = self._msal_app.acquire_token_interactive(scopes=scopes)
+            if self._device_code_callback is not None:
+                # Device code flow — works reliably from GUI worker threads
+                logger.info("Starting device-code sign-in...")
+                flow = self._msal_app.initiate_device_flow(scopes=scopes)
+                if "user_code" not in flow:
+                    error = flow.get("error_description", flow.get("error", "Unknown error"))
+                    raise RuntimeError(f"Could not start sign-in: {error}")
+                # Surface the code to the UI immediately
+                try:
+                    self._device_code_callback(
+                        flow["user_code"],
+                        flow.get("verification_uri", "https://microsoft.com/devicelogin"),
+                    )
+                except Exception as cb_err:
+                    logger.warning(f"Device code callback error: {cb_err}")
+                # Block until user completes sign-in (or timeout in flow["expires_in"])
+                result = self._msal_app.acquire_token_by_device_flow(flow)
+            else:
+                # CLI mode — open the browser for interactive sign-in
+                logger.info("Opening browser for sign-in...")
+                result = self._msal_app.acquire_token_interactive(scopes=scopes)
 
         self._save_msal_cache()
 
         if "access_token" in result:
-            logger.info(f"Token acquired via MSAL")
+            logger.info("Token acquired via MSAL")
             return result["access_token"]
 
         error = result.get("error_description", result.get("error", "Unknown error"))
@@ -352,39 +405,39 @@ class AuthClient:
     # ── Public API ─────────────────────────────────────────────────────
 
     def get_graph_token(self) -> str:
-        """Get an access token for Microsoft Graph API."""
+        """Get an access token for Microsoft Graph API.
+
+        In hybrid mode (default): use MSAL with Graph PowerShell client to get
+        a token with Files.Read.All scope. In az-only mode: use az CLI's
+        Graph token (which has more limited scope).
+        """
         if self._method == "msal":
             return self._get_token_msal(_GRAPH_SCOPES)
         return self._get_token_az("https://graph.microsoft.com")
 
     def get_dataverse_token(self, dataverse_url: str) -> str:
-        """Get an access token for Dataverse Web API."""
+        """Get an access token for Dataverse Web API.
+
+        Always uses az CLI — it works reliably for Dataverse and avoids
+        forcing the user through a second MSAL sign-in for a different
+        client app. (The Microsoft Graph PowerShell client used for Graph
+        is not authorized to call Dataverse.)
+        """
         resource = dataverse_url.rstrip("/")
-        if self._method == "msal":
-            return self._get_token_msal([f"{resource}/user_impersonation"])
         return self._get_token_az(resource)
 
     def get_sharepoint_token(self, hostname: str) -> str:
-        """Get an access token for the SharePoint REST API on a specific tenant host.
-
-        Used to resolve sharing links by following SharePoint's redirect, when
-        Microsoft Graph's /shares endpoint can't be used with the available scope.
-        """
+        """Get an access token for the SharePoint REST API on a specific tenant host."""
         resource = f"https://{hostname.rstrip('/')}"
-        if self._method == "msal":
-            return self._get_token_msal([f"{resource}/AllSites.Read"])
         return self._get_token_az(resource)
 
     def get_signed_in_user(self) -> str | None:
         """Return the username/email of the signed-in user, or None if not signed in."""
-        if self._method == "msal":
-            if not self._msal_app:
-                return None
+        if self._method == "msal" and self._msal_app:
             accounts = self._msal_app.get_accounts()
             if accounts:
                 return accounts[0].get("username")
-            return None
-        # az CLI
+        # Fall back to az CLI (used for Dataverse in hybrid mode)
         return self._detect_user_az() or None
 
     def sign_out(self):
