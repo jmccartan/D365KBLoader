@@ -2,6 +2,8 @@
 
 A simple cross-platform tool that bulk-loads Word documents (`.docx` and `.doc`) into Dynamics 365 Knowledge Base articles. Works on **Windows** and **macOS**.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ![Screenshot of the D365 Knowledge Base Loader GUI](docs/screenshot.png)
 
 ---
@@ -240,6 +242,22 @@ python -m kb_loader --help
 ```
 
 CLI args override settings from `.env` and `~/.d365kbloader/settings.json`.
+
+---
+
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for the full text.
+
+```
+Copyright (c) 2026 John McCartan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction...
+```
+
+The software is provided **"as is"**, without warranty of any kind. See the LICENSE file for the full disclaimer and limitation of liability.
 
 ---
 

@@ -1,3 +1,10 @@
+# =====================================================================
+# D365 Knowledge Base Loader
+# Copyright (c) 2026 John McCartan
+# Licensed under the MIT License. See the LICENSE file in the project
+# root for the full text.
+# =====================================================================
+
 """Convert Word documents (.docx and .doc) to HTML using mammoth.
 
 For legacy .doc files, LibreOffice is used to convert to .docx first.

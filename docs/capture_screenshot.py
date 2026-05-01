@@ -1,3 +1,10 @@
+# =====================================================================
+# D365 Knowledge Base Loader
+# Copyright (c) 2026 John McCartan
+# Licensed under the MIT License. See the LICENSE file in the project
+# root for the full text.
+# =====================================================================
+
 """Capture a screenshot of the GUI for the README, with sanitized demo values.
 
 Launches the GUI with placeholder URLs/email so the screenshot doesn't leak

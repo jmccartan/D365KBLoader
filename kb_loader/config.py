@@ -1,3 +1,10 @@
+# =====================================================================
+# D365 Knowledge Base Loader
+# Copyright (c) 2026 John McCartan
+# Licensed under the MIT License. See the LICENSE file in the project
+# root for the full text.
+# =====================================================================
+
 """Configuration management from environment variables and .env file."""
 
 import os

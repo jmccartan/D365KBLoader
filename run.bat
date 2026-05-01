@@ -1,4 +1,10 @@
 @echo off
+REM =====================================================================
+REM D365 Knowledge Base Loader
+REM Copyright (c) 2026 John McCartan
+REM Licensed under the MIT License. See the LICENSE file in the project
+REM root for the full text.
+REM =====================================================================
 REM ============================================================
 REM  D365 Knowledge Base Loader — Windows launcher
 REM  Double-click this file to run the app.

@@ -1,3 +1,10 @@
+# =====================================================================
+# D365 Knowledge Base Loader
+# Copyright (c) 2026 John McCartan
+# Licensed under the MIT License. See the LICENSE file in the project
+# root for the full text.
+# =====================================================================
+
 """User-facing settings stored in the user profile directory.
 
 Settings live in `~/.d365kbloader/settings.json` so they persist across the
