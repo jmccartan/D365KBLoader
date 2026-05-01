@@ -1,15 +1,24 @@
 """Authentication for Microsoft Graph and Dataverse APIs.
 
-Supports two methods (controlled by AUTH_METHOD env var):
-  - "msal"   : MSAL interactive browser login (requires AZURE_CLIENT_ID + AZURE_TENANT_ID)
-  - "az_cli" : Azure CLI `az account get-access-token` (requires az login + subscription)
-  - "auto"   : (default) try MSAL if configured, fall back to az CLI
+Two methods, transparent to callers:
+  - MSAL interactive browser login — used when AZURE_CLIENT_ID is configured.
+    Uses the "organizations" authority so users never need to specify a tenant.
+  - Azure CLI `az account get-access-token` — fallback when MSAL is not configured.
+    Auto-detects the tenant from the existing az session.
+
+Public API:
+  AuthClient(client_id="", tenant_id="")  — both args optional
+  .get_graph_token()
+  .get_dataverse_token(dataverse_url)
+  .get_signed_in_user() -> str | None
+  .sign_out()
 """
 
 import json
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -17,7 +26,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-TOKEN_REFRESH_MARGIN_SECONDS = 300  # refresh 5 minutes before expiry
+TOKEN_REFRESH_MARGIN_SECONDS = 300
 _WINDOWS = platform.system() == "Windows"
 _CACHE_DIR = Path.home() / ".d365kbloader"
 _TOKEN_CACHE_FILE = _CACHE_DIR / "msal_token_cache.json"
@@ -32,38 +41,21 @@ _GRAPH_SCOPES = [
 class AuthClient:
     """Manages authentication tokens via MSAL or Azure CLI."""
 
-    def __init__(self):
+    def __init__(self, client_id: str = "", tenant_id: str = ""):
         self._tokens: dict[str, str] = {}
         self._token_expiry: dict[str, float] = {}
         self._msal_app = None
         self._msal_cache = None
 
-        method = os.environ.get("AUTH_METHOD", "auto").lower()
-        if method not in ("auto", "msal", "az_cli"):
-            raise ValueError(f"AUTH_METHOD must be 'auto', 'msal', or 'az_cli', got '{method}'")
+        # Allow constructor args; fall back to environment variables for back-compat
+        self._client_id = client_id or os.environ.get("AZURE_CLIENT_ID", "")
+        self._tenant_id = tenant_id or os.environ.get("AZURE_TENANT_ID", "")
 
-        self._method = method
-        self._client_id = os.environ.get("AZURE_CLIENT_ID", "")
-        self._tenant_id = os.environ.get("AZURE_TENANT_ID", "")
-
-        if method == "msal" and not self._client_id:
-            raise RuntimeError(
-                "AUTH_METHOD=msal requires AZURE_CLIENT_ID.\n"
-                "Register a public client app in Entra ID and set AZURE_CLIENT_ID in .env"
-            )
-
-        # Resolve effective method
-        if method == "auto":
-            if self._client_id and self._tenant_id:
-                self._method = "msal"
-                logger.info("Auth: using MSAL interactive (AZURE_CLIENT_ID configured)")
-            else:
-                self._method = "az_cli"
-                logger.info("Auth: using Azure CLI (set AZURE_CLIENT_ID + AZURE_TENANT_ID for MSAL)")
-
-        if self._method == "msal":
+        if self._client_id:
+            self._method = "msal"
             self._init_msal()
         else:
+            self._method = "az_cli"
             self._ensure_az_cli()
             if not self._tenant_id:
                 self._tenant_id = self._detect_tenant_az()
@@ -82,11 +74,20 @@ class AuthClient:
                 "Install it: pip install msal"
             )
 
-        authority = f"https://login.microsoftonline.com/{self._tenant_id}"
+        # Use "organizations" authority when no tenant is specified — works
+        # for any work/school account without forcing the user to pick a tenant.
+        authority = (
+            f"https://login.microsoftonline.com/{self._tenant_id}"
+            if self._tenant_id
+            else "https://login.microsoftonline.com/organizations"
+        )
 
         self._msal_cache = msal.SerializableTokenCache()
         if _TOKEN_CACHE_FILE.exists():
-            self._msal_cache.deserialize(_TOKEN_CACHE_FILE.read_text())
+            try:
+                self._msal_cache.deserialize(_TOKEN_CACHE_FILE.read_text())
+            except Exception:
+                logger.warning("Could not load MSAL cache; starting fresh.")
 
         try:
             self._msal_app = msal.PublicClientApplication(
@@ -96,11 +97,12 @@ class AuthClient:
             )
         except ValueError as e:
             raise RuntimeError(
-                f"MSAL initialization failed — check AZURE_TENANT_ID.\n"
-                f"Current value: {self._tenant_id}\n"
-                f"Detail: {e}"
+                f"MSAL initialization failed.\n"
+                f"  Client ID: {self._client_id}\n"
+                f"  Authority: {authority}\n"
+                f"  Detail: {e}"
             )
-        logger.info(f"MSAL initialized (tenant: {self._tenant_id})")
+        logger.info(f"MSAL initialized (authority: {authority})")
 
     def _save_msal_cache(self):
         """Persist MSAL token cache to disk."""
@@ -109,7 +111,7 @@ class AuthClient:
             _TOKEN_CACHE_FILE.write_text(self._msal_cache.serialize())
 
     def _get_token_msal(self, scopes: list[str]) -> str:
-        """Acquire token via MSAL — silent first, then interactive."""
+        """Acquire token via MSAL — silent first, then interactive browser."""
         accounts = self._msal_app.get_accounts()
         result = None
 
@@ -117,24 +119,19 @@ class AuthClient:
             result = self._msal_app.acquire_token_silent(scopes, account=accounts[0])
 
         if not result or "access_token" not in result:
-            logger.info("Opening browser for Azure login...")
-            print("\n" + "=" * 60)
-            print("  Azure login required. A browser window will open.")
-            print("  Sign in with your Microsoft account.")
-            print("=" * 60 + "\n")
-            sys.stdout.flush()
+            logger.info("Opening browser for sign-in...")
             result = self._msal_app.acquire_token_interactive(scopes=scopes)
 
         self._save_msal_cache()
 
         if "access_token" in result:
-            logger.info(f"Token acquired via MSAL for scopes: {scopes}")
+            logger.info(f"Token acquired via MSAL")
             return result["access_token"]
 
         error = result.get("error_description", result.get("error", "Unknown error"))
-        raise RuntimeError(f"MSAL authentication failed: {error}")
+        raise RuntimeError(f"Sign-in failed: {error}")
 
-    # ── Azure CLI auth (fallback) ──────────────────────────────────────
+    # ── Azure CLI auth ─────────────────────────────────────────────────
 
     def _ensure_az_cli(self):
         """Verify Azure CLI is installed."""
@@ -148,11 +145,11 @@ class AuthClient:
                 raise FileNotFoundError()
         except (FileNotFoundError, subprocess.TimeoutExpired):
             raise RuntimeError(
-                "Azure CLI (az) is required but not found.\n"
-                "Install it from: https://aka.ms/installazurecliwindows (Windows)\n"
-                "                 https://aka.ms/installazurecli (Mac/Linux)\n"
-                "Then run: az login\n\n"
-                "Alternatively, set AZURE_CLIENT_ID and AZURE_TENANT_ID in .env to use MSAL instead."
+                "Azure CLI is not installed.\n"
+                "Install from: https://aka.ms/installazurecli\n"
+                "  Windows: winget install Microsoft.AzureCLI\n"
+                "  Mac:     brew install azure-cli\n\n"
+                "Alternatively, configure MSAL by setting AZURE_CLIENT_ID."
             )
 
     def _detect_tenant_az(self) -> str:
@@ -170,21 +167,29 @@ class AuthClient:
             pass
         return ""
 
+    def _detect_user_az(self) -> str:
+        """Get the signed-in user from the az CLI session."""
+        try:
+            result = subprocess.run(
+                ["az", "account", "show", "--output", "json"],
+                capture_output=True, text=True, timeout=15,
+                shell=_WINDOWS,
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                user = data.get("user", {})
+                return user.get("name", "") if isinstance(user, dict) else ""
+        except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        return ""
+
     def _extract_tenant_from_error(self, stderr: str) -> str:
-        """Parse tenant ID from az CLI error messages like '--tenant "abc-123"'."""
-        import re
+        """Parse tenant ID from az CLI error messages."""
         match = re.search(r'--tenant\s+"([0-9a-f-]{36})"', stderr)
         return match.group(1) if match else ""
 
     def _login_az(self, resource: str | None = None):
         """Run interactive az login, optionally scoped to a resource."""
-        logger.info("Opening browser for Azure login...")
-        print("\n" + "=" * 60)
-        print("  Azure login required. A browser window will open.")
-        print("  Sign in with your Microsoft account.")
-        print("=" * 60 + "\n")
-        sys.stdout.flush()
-
         cmd = ["az", "login", "--allow-no-subscriptions"]
         if self._tenant_id:
             cmd.extend(["--tenant", self._tenant_id])
@@ -195,10 +200,8 @@ class AuthClient:
         result = subprocess.run(cmd, timeout=300, shell=_WINDOWS)
         if result.returncode != 0:
             raise RuntimeError(
-                "Azure login failed. Try running manually:\n"
-                f"  az logout\n"
-                f"  az login" + (f" --tenant {self._tenant_id}" if self._tenant_id else "")
-                + (f" --scope {resource.rstrip('/')}/.default" if resource else "")
+                "Sign-in was cancelled or failed. "
+                "Try clicking Sign In again."
             )
 
     def _get_token_az(self, resource: str) -> str:
@@ -241,17 +244,18 @@ class AuthClient:
                 return token
 
             if attempt == 0:
-                # Try to extract tenant from the error if we don't have one yet
                 if not self._tenant_id:
                     detected = self._extract_tenant_from_error(result.stderr)
                     if detected:
                         self._tenant_id = detected
                         logger.info(f"Auto-detected tenant from error: {self._tenant_id}")
-                logger.info(f"Not logged in or token expired for {resource}. Triggering login...")
+                logger.info(f"Triggering sign-in for {resource}...")
                 self._login_az(resource)
             else:
                 raise RuntimeError(
-                    f"Failed to get token for {resource}: {result.stderr.strip()}"
+                    "Could not get a token from Azure CLI.\n"
+                    "Try signing out and signing in again.\n"
+                    f"Detail: {result.stderr.strip()}"
                 )
 
         raise RuntimeError(f"Failed to get token for {resource}")
@@ -270,3 +274,43 @@ class AuthClient:
         if self._method == "msal":
             return self._get_token_msal([f"{resource}/user_impersonation"])
         return self._get_token_az(resource)
+
+    def get_signed_in_user(self) -> str | None:
+        """Return the username/email of the signed-in user, or None if not signed in."""
+        if self._method == "msal":
+            if not self._msal_app:
+                return None
+            accounts = self._msal_app.get_accounts()
+            if accounts:
+                return accounts[0].get("username")
+            return None
+        # az CLI
+        return self._detect_user_az() or None
+
+    def sign_out(self):
+        """Sign out — clears MSAL cache. (Does NOT log out of az CLI globally.)"""
+        if self._method == "msal" and self._msal_app:
+            for account in self._msal_app.get_accounts():
+                self._msal_app.remove_account(account)
+            if _TOKEN_CACHE_FILE.exists():
+                try:
+                    _TOKEN_CACHE_FILE.unlink()
+                except OSError:
+                    pass
+            self._tokens.clear()
+            self._token_expiry.clear()
+            logger.info("Signed out (MSAL cache cleared).")
+        else:
+            # For az CLI, we don't touch global state. Just clear our in-memory cache.
+            self._tokens.clear()
+            self._token_expiry.clear()
+            logger.info(
+                "In-memory tokens cleared. "
+                "To fully sign out of Azure CLI, run 'az logout' manually."
+            )
+
+    @property
+    def method(self) -> str:
+        """Current auth method: 'msal' or 'az_cli'."""
+        return self._method
+

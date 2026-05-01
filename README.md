@@ -1,351 +1,151 @@
 # D365 Knowledge Base Loader
 
-A cross-platform command-line tool that bulk-loads Word documents (`.docx` and `.doc`) into Dynamics 365 Knowledge Base articles. Works on both **Windows** and **Mac**.
+A simple cross-platform tool that bulk-loads Word documents (`.docx` and `.doc`) into Dynamics 365 Knowledge Base articles.
 
-## How It Works
+## Quick Start
 
-1. **Point it at a folder** of Word documents — either a local folder or a SharePoint URL
-2. It recursively finds all `.docx` and `.doc` files, including subfolders
-3. Each document is converted to clean HTML (using [mammoth](https://github.com/mwilliamson/python-mammoth); legacy `.doc` files are first converted via [LibreOffice](https://www.libreoffice.org/))
-4. An HTML copy is saved locally for reference, preserving the folder structure
-5. A Knowledge Article is created in D365 Dataverse with:
+### 1. Install Python (one-time)
+
+Download Python 3.10 or newer from [python.org/downloads](https://www.python.org/downloads/).
+
+> **Windows users:** During install, check the box that says **"Add python.exe to PATH"**.
+
+### 2. Run the app
+
+Just double-click the launcher for your operating system:
+
+- **Windows:** double-click `run.bat`
+- **Mac:** double-click `run.command` *(if Mac blocks it the first time, right-click → Open)*
+
+The first run takes a minute to set things up. After that it opens immediately.
+
+### 3. In the app
+
+1. Click **Sign In** (a browser window opens, sign in with your Microsoft account)
+2. Fill in the **Dataverse URL** (e.g. `https://your-org.crm.dynamics.com`)
+3. Pick your **source**:
+   - **SharePoint folder URL** — copied from your browser's address bar, OR
+   - **Local folder** — click Browse to pick a folder on your computer
+4. Click **🔌 Test Connection** to verify everything works
+5. Click **🧪 Dry Run** first to preview the conversion (nothing is published)
+6. Click **▶ Run** to publish to D365
+
+The app keeps a detailed log of every run, plus an Excel summary you can review.
+
+---
+
+## What the app does
+
+1. Finds every `.docx` and `.doc` file in your folder (including subfolders)
+2. Converts each one to clean HTML
+3. Saves a local HTML copy for reference
+4. Creates a Knowledge Article in D365 with:
    - **Title** = the filename (without extension)
    - **Content** = the converted HTML
-   - **Status** = Published (transitions through Draft → Approved → Published)
-   - **Creation mode** = Manual
+   - **Status** = Published
    - **Language** = English
-6. An Excel log file is generated for each run summarizing every file processed
 
-## Key Features
-
-- **Two input modes** — read from a local folder or directly from SharePoint
-- **No app registration required** — authenticates via Azure CLI (`az login`)
-- **Dry run mode** (`--dry-run`) — convert files to HTML without uploading, useful for previewing
-- **Idempotent** — on re-runs, choose to `skip`, `update`, or `duplicate` existing articles
-- **Resilient** — retries on API throttling (429) and server errors (5xx)
-- **Traceability** — stores the source file path in each article's keywords and description
-- **Run log** — timestamped Excel report for every run
-
----
-
-## Prerequisites
-
-- **Python 3.10+**
-  - Windows: [Download from python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.13`
-  - Mac: `brew install python`
-- **Authentication** — one of the following:
-  - **Option A (recommended): MSAL interactive login** — register a free public client app in [Entra ID](https://entra.microsoft.com) (no Azure subscription needed). See [Authentication](#authentication) below.
-  - **Option B: Azure CLI** (`az`) — [Install guide](https://aka.ms/installazurecli). Requires an Azure subscription associated with your account.
-- Your account needs access to the D365/Dataverse environment
-- For SharePoint mode: your account also needs access to the SharePoint site
-- **LibreOffice** (only needed if you have legacy `.doc` files — not required for `.docx`)
-  - The tool will notify you with install instructions if a `.doc` file is encountered and LibreOffice is not installed
-  - Windows: [Download from libreoffice.org](https://www.libreoffice.org/download/) or `winget install TheDocumentFoundation.LibreOffice`
-  - Mac: `brew install --cask libreoffice`
-- **D365 Customer Service** environment with Knowledge Management enabled
-
----
-
-## Setup
-
-### 1. Create and activate a virtual environment
-
-A virtual environment keeps this project's dependencies isolated from your global Python installation. See [why this is recommended](#recommended-use-a-virtual-environment) at the bottom of this README.
-
-**Windows:**
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-**Mac / Linux:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-Your terminal prompt should now show `(.venv)` — this confirms the environment is active.
-
-> **Note:** You need to activate the venv each time you open a new terminal before running the tool. Just re-run the `activate` command above (you don't need to recreate the venv).
-
-### 2. Install Python dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Configure your environment
-
-**Windows:**
-```cmd
-copy .env.example .env
-```
-
-**Mac:**
-```bash
-cp .env.example .env
-```
-
-Open `.env` in a text editor and set your Dataverse environment URL:
-```
-DATAVERSE_URL=https://your-org.crm.dynamics.com
-```
-
-> **Tip:** The `DATAVERSE_URL` determines which D365 environment is targeted. Use your sandbox URL for testing before pointing at production:
-> - Production: `https://your-org.crm.dynamics.com`
-> - Sandbox: `https://your-org-sandbox.crm.dynamics.com`
-
-If you plan to use SharePoint as your input source, also set the folder URL:
-```
-SHAREPOINT_FOLDER_URL=https://your-tenant.sharepoint.com/sites/YourSite/Shared Documents/YourFolder
-```
-
-> **How to get the SharePoint folder URL:**
->
-> The easiest way is to **copy the URL straight from your browser**. Navigate to the folder in SharePoint and copy the address bar — the tool will automatically extract the folder path, even if the URL contains extra parameters like `viewid` or `id`.
->
-> Alternatively, you can build a clean URL manually:
-> ```
-> https://your-tenant.sharepoint.com/sites/SiteName/Shared Documents/FolderName
-> ```
-> - `Shared Documents` is the default document library URL name (shown as "Documents" in the SharePoint UI)
-> - Append any subfolder names separated by `/`
->
-> **Note:** Sharing links (the kind you get from the **Copy link** / **Share** button) are *not* supported — they start with `/:f:/` and don't contain a direct folder path. Use the browser address bar instead.
-
-### 4. Set up authentication
-
-**Option A — MSAL interactive login (recommended, no Azure subscription needed):**
-
-Register a public client app in Entra ID (free):
-
-1. Go to [entra.microsoft.com](https://entra.microsoft.com) → **App registrations** → **New registration**
-2. **Name:** `D365KBLoader`, **Supported account types:** Single tenant
-3. **Redirect URI:** select **Mobile and desktop applications**, enter `http://localhost`
-4. Under **API permissions**, add:
-   - Microsoft Graph → `Sites.Read.All`, `Files.Read.All`
-   - Dynamics CRM → `user_impersonation`
-5. Copy the **Application (client) ID** and **Directory (tenant) ID** into your `.env`:
-
-```
-AZURE_CLIENT_ID=your-app-id-here
-AZURE_TENANT_ID=your-tenant-id-here
-```
-
-On first run, a browser window will open for sign-in. Tokens are cached locally for future runs.
-
-**Option B — Azure CLI (requires Azure subscription):**
-
-```bash
-az login
-```
-
-This opens a browser where you sign in with your Microsoft account. The tool will use `az account get-access-token` to acquire tokens.
-
----
-
-## Usage
-
-> **Recommended:** Run with `--dry-run` first to convert files and review the HTML output before publishing to Dataverse.
-
-### Step 1: Dry run (preview — converts to HTML only, nothing is published)
-
-**Local folder — Windows:**
-```cmd
-python -m kb_loader --local-folder "C:\Users\you\OneDrive - Company\KB Articles" --dry-run
-```
-
-**Local folder — Mac:**
-```bash
-python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles --dry-run
-```
-
-**SharePoint folder (reads directly from SharePoint via Graph API):**
-```bash
-python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles" --dry-run
-```
-
-Review the HTML files in the `./output` folder and check the Excel run log to confirm the right files were picked up.
-
-### Step 2: Publish to Dataverse (when you're happy with the dry run)
-
-**Local folder — Windows:**
-```cmd
-python -m kb_loader --local-folder "C:\Users\you\OneDrive - Company\KB Articles"
-```
-
-**Local folder — Mac:**
-```bash
-python -m kb_loader --local-folder ~/OneDrive\ -\ Company/KB\ Articles
-```
-
-**SharePoint folder:**
-```bash
-python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles"
-```
-
-### Check KB status (no processing — just view current article counts)
-
-```bash
-python -m kb_loader --kb-status
-```
-
-Example output:
-```
-KB Article Summary
-===================================
-  Archived                    2
-  Draft                       3
-  Published                  10
------------------------------------
-  Total                      15
-===================================
-```
-
-### All options combined
-
-**Local folder — Windows:**
-```cmd
-python -m kb_loader --local-folder "C:\docs" --output-dir "C:\html_output" --existing skip --verbose
-```
-
-**Local folder — Mac:**
-```bash
-python -m kb_loader --local-folder ./docs --output-dir ./html_output --existing skip --verbose
-```
-
-**SharePoint folder:**
-```bash
-python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite/Shared Documents/KB Articles" --output-dir ./html_output --existing skip --verbose
-```
-
----
-
-## CLI Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--local-folder` | Local folder with Word files (.docx, .doc) | — |
-| `--sharepoint-url` | SharePoint folder URL | — |
-| `--output-dir` | Local directory for HTML files and run logs | `./output` |
-| `--existing` | Handle duplicates: `skip`, `update`, or `duplicate` | `skip` |
-| `--dry-run` | Convert only, don't upload to Dataverse | `false` |
-| `--kb-status` | Show current KB article counts by status and exit | — |
-| `--verbose` / `-v` | Enable debug logging | `false` |
-
-> **Note:** `--local-folder` and `--sharepoint-url` are mutually exclusive — use one or the other.
+If a file is empty (no content), it's skipped — no HTML or KB article is created.
 
 ---
 
 ## Authentication
 
-The tool supports two authentication methods, controlled by the `AUTH_METHOD` setting in `.env`:
+The app uses your existing Microsoft login. There are two ways it can authenticate:
 
-| Method | When to use | Requirements |
-|--------|-------------|--------------|
-| **MSAL interactive** (default if configured) | Demo tenants, no Azure subscription | `AZURE_CLIENT_ID` + `AZURE_TENANT_ID` in `.env` |
-| **Azure CLI** (fallback) | When you have an Azure subscription | `az login` |
+| Method | When it's used |
+|--------|----------------|
+| **Azure CLI** | If you've run `az login` on your machine. The app picks up your existing session — no setup needed. |
+| **MSAL** | If your IT admin has registered an Entra app and provided an `AZURE_CLIENT_ID`. Better for users without an Azure subscription. |
 
-**Auto mode** (default): If `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are set, MSAL is used. Otherwise, falls back to Azure CLI.
+In both cases, the app handles tenant detection automatically — **you don't need to enter a tenant ID**.
 
-Both methods acquire separate tokens for Graph API (SharePoint access) and Dataverse (article creation). MSAL tokens are cached locally in `~/.d365kbloader/` across runs.
+### Required permissions
 
----
-
-## Knowledge Article Details
-
-Each article is created in Dataverse with these fields:
-
-| Field | Value |
-|-------|-------|
-| **Title** | Filename without extension (e.g., `Troubleshooting Guide.docx` → `Troubleshooting Guide`) |
-| **Content** | Full HTML converted from the Word document |
-| **Language** | English (locale 1033) |
-| **Creation mode** | Manual (`msdyn_creationmode = 0`) |
-| **Description** | Auto-generated with source file path |
-| **Keywords** | Source file path (for traceability) |
-| **Status** | Published (transitions through Draft → Approved → Published) |
+Your Microsoft account needs:
+- Access to the D365 environment (any role that lets you create knowledge articles)
+- For SharePoint mode: read access to the SharePoint site
 
 ---
 
-## Idempotency
+## Settings
 
-When re-running the tool, it checks for existing articles by title:
+The app saves your preferences (Dataverse URL, source folder, etc.) to `~/.d365kbloader/settings.json` so they're remembered across runs and even if you reinstall.
 
-| Mode | Behavior |
-|------|----------|
-| **`skip`** (default) | Skip files that already have a matching article |
-| **`update`** | Overwrite the existing article's content |
-| **`duplicate`** | Create a new article regardless |
+You can also use a `.env` file in the project folder to override settings — useful for advanced users or scripted runs.
 
 ---
 
-## Run Log
+## Idempotency (re-running)
 
-Each run generates a timestamped Excel file in the output directory (e.g. `output/kb_loader_log_20260429_143000.xlsx`).
+When you re-run, the app checks each Word file's title against existing articles:
 
-The log includes a summary header and a row per file with these columns:
-
-| Column | Description |
-|--------|-------------|
-| File Name | Original filename |
-| Folder Path | Subfolder relative to input root |
-| File Size (bytes) | Raw file size |
-| Has Content | Whether HTML conversion produced content |
-| HTML Saved | Whether the HTML file was saved locally |
-| Published to KB | Whether it was published to Dataverse |
-| KB Action | Created, Updated, Skipped, Dry Run, or Error |
-| Article ID | Dataverse knowledge article ID |
-| Error | Error message if processing failed |
-
-Cells are color-coded (green = yes, red = no, yellow = skipped) and the sheet includes auto-filter and frozen headers.
+| Mode | What happens to existing articles |
+|------|----------------------------------|
+| **skip** *(default)* | Leave them alone, don't recreate |
+| **update** | Overwrite the content with the new version |
+| **duplicate** | Create a new article anyway |
 
 ---
 
-## Project Structure
+## Run logs
+
+After every run, two files are written to your output folder:
+
+- **`kb_loader_YYYYMMDD_HHMMSS.log`** — detailed log of every step (helpful for troubleshooting)
+- **`kb_loader_log_YYYYMMDD_HHMMSS.xlsx`** — Excel summary with one row per file (easy to share with colleagues)
+
+The Excel file shows file names, folder paths, content status, KB action (Created/Updated/Skipped/Error), and article IDs.
+
+---
+
+## Troubleshooting
+
+| Symptom | What to try |
+|---------|-------------|
+| **"Python is not installed"** when launching | Install Python from python.org and check "Add to PATH" during install |
+| **Sign-in dialog appears repeatedly** | Click Sign Out, then Sign In again. If using Azure CLI, try `az logout && az login` in a terminal |
+| **"Could not get a token from Azure CLI"** | Your account may not have access to that Dataverse environment. Contact your D365 admin |
+| **SharePoint URL not working** | Use the URL straight from your browser's address bar — sharing links (the kind from "Copy link") aren't supported |
+| **Legacy `.doc` files not converting** | Install [LibreOffice](https://www.libreoffice.org/download/). Modern `.docx` files don't need it |
+
+For deeper investigation, open the **detail log** (timestamped `.log` file in your output folder) to see the full trace of every step.
+
+---
+
+## Command-line usage (advanced)
+
+You can also run from a terminal:
+
+```bash
+# Launch the GUI
+python -m kb_loader
+
+# Or use the CLI
+python -m kb_loader --local-folder "C:\docs" --dry-run
+python -m kb_loader --sharepoint-url "https://..." --existing update
+python -m kb_loader --kb-status
+python -m kb_loader --help
+```
+
+---
+
+## Project structure
 
 ```
 D365KBLoader/
-├── requirements.txt          # Python dependencies
-├── .env.example              # Configuration template
-├── README.md                 # This file
+├── run.bat                  ← Windows launcher (double-click)
+├── run.command              ← Mac launcher (double-click)
+├── requirements.txt         ← Python dependencies
+├── README.md                ← this file
 └── kb_loader/
-    ├── __init__.py
-    ├── __main__.py           # CLI entry point
-    ├── config.py             # Configuration from .env
-    ├── auth.py               # Authentication (MSAL interactive + Azure CLI fallback)
-    ├── sharepoint_client.py  # SharePoint file enumeration & download
-    ├── dataverse_client.py   # Knowledge Article CRUD & publishing
-    ├── converter.py          # Word → HTML conversion (.docx + .doc)
-    └── run_log.py            # Excel run log generator
+    ├── __main__.py          ← CLI entry point
+    ├── gui.py               ← Tkinter GUI
+    ├── service.py           ← Core load logic (used by both CLI and GUI)
+    ├── settings.py          ← User-profile settings store
+    ├── auth.py              ← Microsoft authentication (MSAL + Azure CLI)
+    ├── sharepoint_client.py ← SharePoint via Graph API
+    ├── dataverse_client.py  ← D365 Knowledge Article CRUD
+    ├── converter.py         ← Word → HTML conversion
+    └── run_log.py           ← Excel run log generator
 ```
-
----
-
-## Recommended: Use a Virtual Environment
-
-Rather than installing dependencies globally, it's a good idea to use a **Python virtual environment** (venv). A venv creates an isolated Python installation specifically for this project, which means:
-
-- **No version conflicts** — other Python projects on your machine won't interfere with this one (and vice versa). If another project needs a different version of `requests` or `openpyxl`, both can coexist without issues.
-- **Clean uninstall** — when you're done with the project, just delete the `.venv` folder. No leftover packages polluting your global Python installation.
-- **Reproducibility** — everyone working on the project gets the exact same dependency versions, reducing "works on my machine" problems.
-
-### Creating and using a venv
-
-**Windows:**
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-**Mac / Linux:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Once activated, your terminal prompt will show `(.venv)` as a prefix. From there, all `python` and `pip` commands use the isolated environment automatically.
-
-> **Tip:** You need to activate the venv each time you open a new terminal. If you see an error like `ModuleNotFoundError: No module named 'mammoth'`, it usually means the venv isn't activated.
