@@ -67,7 +67,22 @@ class SharePointClient:
     def _get(self, url: str, params: dict | None = None) -> dict:
         """GET with retry and throttle handling."""
         for attempt in range(MAX_RETRIES):
-            resp = self.session.get(url, headers=self._headers(), params=params)
+            try:
+                resp = self.session.get(url, headers=self._headers(), params=params)
+            except requests.exceptions.ConnectionError as e:
+                msg = str(e).lower()
+                if "nameresolutionerror" in msg or "getaddrinfo failed" in msg or "name or service not known" in msg:
+                    raise RuntimeError(
+                        "Couldn't reach Microsoft Graph. The hostname couldn't be "
+                        "resolved — check that you're online and not blocked by a VPN."
+                    )
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (attempt + 1)
+                    logger.warning(f"Connection error: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(f"Could not connect to Microsoft Graph: {e}")
+
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", RETRY_BASE_DELAY * (attempt + 1)))
                 logger.warning(f"Throttled by Graph API. Waiting {retry_after}s...")

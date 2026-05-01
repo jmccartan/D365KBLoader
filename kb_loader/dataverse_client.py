@@ -60,7 +60,32 @@ class DataverseClient:
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make an HTTP request with retry logic."""
         for attempt in range(MAX_RETRIES):
-            resp = self.session.request(method, url, headers=self._headers(), **kwargs)
+            try:
+                resp = self.session.request(method, url, headers=self._headers(), **kwargs)
+            except requests.exceptions.ConnectionError as e:
+                # DNS failures, refused connections, no-route errors all surface as
+                # ConnectionError. Translate to a friendly message so the user
+                # knows it's a URL/network issue, not a bug.
+                msg = str(e).lower()
+                if "nameresolutionerror" in msg or "getaddrinfo failed" in msg or "name or service not known" in msg:
+                    host = self.config.dataverse_url.replace("https://", "").rstrip("/")
+                    raise RuntimeError(
+                        f"Couldn't reach the Dataverse server: {host}\n\n"
+                        "The hostname doesn't exist in DNS. Possible causes:\n"
+                        "  - Typo in the Dataverse URL (check Settings)\n"
+                        "  - The D365 environment has been deleted or renamed\n"
+                        "  - You're offline or behind a VPN that blocks DNS\n\n"
+                        "Verify the URL in the Power Platform admin center "
+                        "(https://admin.powerplatform.microsoft.com)."
+                    )
+                # Other connection errors — retry on the first attempt, then surface
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (attempt + 1)
+                    logger.warning(f"Connection error: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(f"Could not connect to Dataverse: {e}")
+
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", RETRY_BASE_DELAY * (attempt + 1)))
                 logger.warning(f"Throttled by Dataverse. Waiting {retry_after}s...")
