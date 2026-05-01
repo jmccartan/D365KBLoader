@@ -115,6 +115,28 @@ def _open_path_in_explorer(path: Path):
         Messagebox.show_error(f"Could not open:\n{path}\n\n{e}", "Error")
 
 
+def _open_url_in_browser(url: str) -> bool:
+    """Open a URL in the user's default browser.
+
+    Uses platform-specific commands directly instead of Python's webbrowser
+    module, which has been observed to crash with a GIL fatal error on
+    Python 3.13 + Windows ARM64 when called from a tkinter callback.
+
+    Returns True on apparent success, False on failure.
+    """
+    try:
+        if _SYSTEM == "Windows":
+            os.startfile(url)  # type: ignore[attr-defined]
+        elif _SYSTEM == "Darwin":
+            subprocess.Popen(["open", url])
+        else:
+            subprocess.Popen(["xdg-open", url])
+        return True
+    except Exception as e:
+        logger.warning(f"Could not open browser for {url}: {e}")
+        return False
+
+
 class KBLoaderGUI:
     """Main GUI window."""
 
@@ -648,12 +670,14 @@ class KBLoaderGUI:
         step1.pack(fill=X, pady=(0, 8))
 
         def open_link():
-            import webbrowser
-            try:
-                webbrowser.open(sharing_url)
+            if _open_url_in_browser(sharing_url):
                 open_btn.configure(text="✓ Opened — see your browser", bootstyle=SUCCESS)
-            except Exception as e:
-                Messagebox.show_error(f"Could not open browser: {e}", "Error")
+            else:
+                Messagebox.show_error(
+                    "Could not open browser. Please copy the URL manually:\n\n"
+                    + sharing_url,
+                    "Error",
+                )
 
         open_btn = ttk.Button(
             step1, text="Open link in browser",
@@ -752,13 +776,18 @@ class KBLoaderGUI:
             width=12,
         ).pack(side=RIGHT)
 
-        # Auto-open the link to save the user a click
-        try:
-            import webbrowser
-            webbrowser.open(sharing_url)
-            open_btn.configure(text="✓ Opened — see your browser", bootstyle=SUCCESS)
-        except Exception:
-            pass
+        # Auto-open the link to save the user a click. Defer to the next
+        # tk loop iteration so the dialog renders first, and use our safe
+        # platform-specific helper instead of webbrowser.open() (which has
+        # been observed to crash with a GIL fatal error on Python 3.13 +
+        # Windows ARM64 when called synchronously from a tk callback).
+        def _auto_open_link():
+            if _open_url_in_browser(sharing_url):
+                try:
+                    open_btn.configure(text="✓ Opened — see your browser", bootstyle=SUCCESS)
+                except tk.TclError:
+                    pass
+        dlg.after(150, _auto_open_link)
 
         # Bring dialog to front, then focus the paste field so they can Ctrl+V immediately
         dlg.lift()
@@ -936,11 +965,7 @@ class KBLoaderGUI:
             self.root.after(1500, lambda: copy_btn.configure(text="Copy code"))
 
         def open_browser():
-            import webbrowser
-            try:
-                webbrowser.open(url)
-            except Exception as e:
-                logger.warning(f"Could not open browser: {e}")
+            _open_url_in_browser(url)
 
         copy_btn = ttk.Button(
             btn_row, text="Copy code",
@@ -977,8 +1002,9 @@ class KBLoaderGUI:
         dlg.after(500, lambda: dlg.attributes("-topmost", False))
         dlg.focus_force()
 
-        # Auto-open the browser so the user doesn't have to hunt for the URL
-        open_browser()
+        # Auto-open the browser so the user doesn't have to hunt for the URL.
+        # Defer slightly so the dialog renders first.
+        dlg.after(150, open_browser)
 
         # Also drop a line into the live log so it's not lost
         self._log(f"\nSign-in code: {code}\n", "bold")
