@@ -31,13 +31,35 @@ class DocxFile:
     sp_file: object | None = None  # SharePointFile
 
 
-def setup_logging(verbose: bool):
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+def setup_logging(verbose: bool, output_dir: str = "./output"):
+    """Configure logging: detailed output to a log file, progress summary to console."""
+    # Ensure output directory exists for the log file
+    log_dir = Path(output_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"kb_loader_{timestamp}.log"
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    # File handler — all detail goes here
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    ))
+    root_logger.addHandler(file_handler)
+
+    # Console handler — only warnings+ from libraries, progress via print()
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger.addHandler(console_handler)
+
+    return log_file
 
 
 def enumerate_local_docx(folder: str) -> list[DocxFile]:
@@ -107,7 +129,10 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    setup_logging(args.verbose)
+
+    # Determine output dir early for log file placement
+    output_dir = args.output_dir or "./output"
+    log_file = setup_logging(args.verbose, output_dir)
     logger = logging.getLogger("kb_loader")
 
     # --kb-status: just show article counts and exit
@@ -171,6 +196,15 @@ def main():
     logger.info(f"Dry run        : {args.dry_run}")
     logger.info("=" * 60)
 
+    # Console banner
+    print("=" * 60)
+    print("D365 Knowledge Base Loader")
+    print("=" * 60)
+    mode_label = "DRY RUN" if args.dry_run else "LIVE"
+    print(f"  Mode: {mode_label}  |  Existing: {config.existing_article_mode}")
+    print(f"  Log file: {log_file}")
+    print("=" * 60)
+
     # Initialize auth (triggers az login if needed)
     auth = AuthClient()
 
@@ -197,10 +231,13 @@ def main():
         sys.exit(1)
 
     if not files:
+        print("No Word files found. Nothing to do.")
         logger.info("No Word files found. Nothing to do.")
         sys.exit(0)
 
-    logger.info(f"Found {len(files)} Word file(s) to process.")
+    total_files = len(files)
+    print(f"\nFound {total_files} Word file(s) to process.\n")
+    logger.info(f"Found {total_files} Word file(s) to process.")
 
     # Initialize Dataverse client (only if not dry-run, to avoid unnecessary login)
     dv_client = None
@@ -223,7 +260,8 @@ def main():
     stats = {"converted": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
 
     for i, doc_file in enumerate(files, 1):
-        logger.info(f"\n[{i}/{len(files)}] Processing: {doc_file.source_display}")
+        logger.info(f"\n[{i}/{total_files}] Processing: {doc_file.source_display}")
+        status_parts = []
 
         log_entry = {
             "file_name": doc_file.name,
@@ -253,18 +291,31 @@ def main():
             has_content = bool(html and html.strip())
             log_entry["has_content"] = has_content
 
-            # Save HTML locally
-            html_path = save_html_file(
-                html, config.output_dir, doc_file.relative_path, doc_file.name
-            )
-            logger.info(f"  Saved HTML: {html_path}")
-            log_entry["html_saved"] = True
+            if has_content:
+                status_parts.append("content: yes")
+            else:
+                status_parts.append("content: EMPTY")
+
+            # Save HTML locally only if there is content
+            if has_content:
+                html_path = save_html_file(
+                    html, config.output_dir, doc_file.relative_path, doc_file.name
+                )
+                logger.info(f"  Saved HTML: {html_path}")
+                log_entry["html_saved"] = True
+                status_parts.append("html: saved")
+            else:
+                logger.info("  No content — skipping HTML file.")
+                log_entry["html_saved"] = False
+                status_parts.append("html: skipped")
 
             if args.dry_run:
                 logger.info("  [DRY RUN] Skipping Dataverse upload.")
                 log_entry["kb_action"] = "Dry Run"
                 stats["skipped"] += 1
+                status_parts.append("KB: dry run")
                 run_log.add_entry(**log_entry)
+                print(f"  [{i}/{total_files}] {doc_file.name}  →  {', '.join(status_parts)}")
                 continue
 
             # Prepare article metadata
@@ -279,7 +330,9 @@ def main():
                 log_entry["kb_action"] = "Skipped"
                 log_entry["article_id"] = existing["knowledgearticleid"]
                 stats["skipped"] += 1
+                status_parts.append("KB: skipped (exists)")
                 run_log.add_entry(**log_entry)
+                print(f"  [{i}/{total_files}] {doc_file.name}  →  {', '.join(status_parts)}")
                 continue
 
             if existing and config.existing_article_mode == "update":
@@ -292,6 +345,7 @@ def main():
                 log_entry["article_id"] = article_id
                 log_entry["published"] = True
                 stats["updated"] += 1
+                status_parts.append("KB: updated")
             else:
                 # Create new article
                 logger.info(f"  Creating article: '{title}'...")
@@ -304,6 +358,7 @@ def main():
                 log_entry["article_id"] = article_id
                 log_entry["published"] = True
                 stats["created"] += 1
+                status_parts.append("KB: created")
 
             logger.info(f"  Done.")
             run_log.add_entry(**log_entry)
@@ -314,7 +369,9 @@ def main():
             log_entry["kb_action"] = "Error"
             run_log.add_entry(**log_entry)
             stats["errors"] += 1
-            continue
+            status_parts.append(f"ERROR: {e}")
+
+        print(f"  [{i}/{total_files}] {doc_file.name}  →  {', '.join(status_parts)}")
 
     # Snapshot KB article counts after processing
     if dv_client:
@@ -330,16 +387,23 @@ def main():
     # Save run log
     log_path = run_log.save(config.output_dir)
 
-    # Summary
-    logger.info("\n" + "=" * 60)
-    logger.info("Processing complete!")
-    logger.info(f"  Files converted : {stats['converted']}")
-    logger.info(f"  Articles created: {stats['created']}")
-    logger.info(f"  Articles updated: {stats['updated']}")
-    logger.info(f"  Skipped         : {stats['skipped']}")
-    logger.info(f"  Errors          : {stats['errors']}")
-    logger.info(f"  Run log         : {log_path}")
-    logger.info("=" * 60)
+    # Summary — both console and log file
+    summary_lines = [
+        "",
+        "=" * 60,
+        "Processing complete!",
+        f"  Files converted : {stats['converted']}",
+        f"  Articles created: {stats['created']}",
+        f"  Articles updated: {stats['updated']}",
+        f"  Skipped         : {stats['skipped']}",
+        f"  Errors          : {stats['errors']}",
+        f"  Run log         : {log_path}",
+        f"  Detail log      : {log_file}",
+        "=" * 60,
+    ]
+    for line in summary_lines:
+        logger.info(line)
+        print(line)
 
     if stats["errors"] > 0:
         sys.exit(1)

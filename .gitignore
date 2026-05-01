@@ -16,6 +16,7 @@ env/
 
 # Output files (generated at runtime)
 output/
+html_output/
 
 # OS files
 .DS_Store
