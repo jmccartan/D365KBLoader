@@ -1,7 +1,7 @@
 @echo off
 REM =====================================================================
 REM D365 Knowledge Base Loader
-REM Copyright (c) 2026 John McCartan
+REM Copyright (c) 2026. All rights reserved.
 REM Licensed under the MIT License. See the LICENSE file in the project
 REM root for the full text.
 REM =====================================================================

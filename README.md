@@ -250,7 +250,7 @@ CLI args override settings from `.env` and `~/.d365kbloader/settings.json`.
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for the full text.
 
 ```
-Copyright (c) 2026 John McCartan
+Copyright (c) 2026. All rights reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

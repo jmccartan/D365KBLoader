@@ -1,6 +1,6 @@
 # =====================================================================
 # D365 Knowledge Base Loader
-# Copyright (c) 2026 John McCartan
+# Copyright (c) 2026. All rights reserved.
 # Licensed under the MIT License. See the LICENSE file in the project
 # root for the full text.
 # =====================================================================
