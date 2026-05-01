@@ -56,18 +56,58 @@ logger = logging.getLogger(__name__)
 APP_TITLE = "D365 Knowledge Base Loader"
 APP_SUBTITLE = "Bulk-load Word documents into Dynamics 365 Knowledge articles"
 DEFAULT_THEME = "cosmo"  # clean, modern, blue accent
-WINDOW_WIDTH = 920
-WINDOW_HEIGHT = 760
+WINDOW_WIDTH = 1060
+WINDOW_HEIGHT = 920
+
+# ── Platform-aware font selection ─────────────────────────────────────
+_SYSTEM = platform.system()
+
+if _SYSTEM == "Windows":
+    FONT_FAMILY = "Segoe UI"
+    FONT_FAMILY_BOLD = "Segoe UI Semibold"
+    FONT_FAMILY_MONO = "Cascadia Mono"
+    FONT_FAMILY_SYMBOL = "Segoe UI Symbol"
+elif _SYSTEM == "Darwin":  # macOS
+    FONT_FAMILY = "SF Pro Text"  # falls back to system default if unavailable
+    FONT_FAMILY_BOLD = "SF Pro Text"  # use weight option for bold
+    FONT_FAMILY_MONO = "Menlo"
+    FONT_FAMILY_SYMBOL = "Apple Symbols"
+else:  # Linux/other
+    FONT_FAMILY = "DejaVu Sans"
+    FONT_FAMILY_BOLD = "DejaVu Sans"
+    FONT_FAMILY_MONO = "DejaVu Sans Mono"
+    FONT_FAMILY_SYMBOL = "DejaVu Sans"
+
+
+def font_regular(size: int = 10) -> tuple:
+    return (FONT_FAMILY, size)
+
+
+def font_bold(size: int = 10) -> tuple:
+    # On Mac, "SF Pro Text" doesn't have a "Semibold" variant in the family name —
+    # use weight tuple instead. Tk's tuple form is (family, size, *modifiers).
+    if _SYSTEM == "Darwin":
+        return (FONT_FAMILY_BOLD, size, "bold")
+    return (FONT_FAMILY_BOLD, size)
+
+
+def font_mono(size: int = 10, bold: bool = False) -> tuple:
+    if bold:
+        return (FONT_FAMILY_MONO, size, "bold")
+    return (FONT_FAMILY_MONO, size)
+
+
+def font_symbol(size: int = 14) -> tuple:
+    return (FONT_FAMILY_SYMBOL, size)
 
 
 def _open_path_in_explorer(path: Path):
     """Open a file or folder in the OS file manager."""
     path = Path(path).resolve()
-    system = platform.system()
     try:
-        if system == "Windows":
+        if _SYSTEM == "Windows":
             os.startfile(str(path))  # type: ignore[attr-defined]
-        elif system == "Darwin":
+        elif _SYSTEM == "Darwin":
             subprocess.run(["open", str(path)], check=False)
         else:
             subprocess.run(["xdg-open", str(path)], check=False)
@@ -82,7 +122,7 @@ class KBLoaderGUI:
         self.root = root
         self.root.title(APP_TITLE)
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.root.minsize(820, 660)
+        self.root.minsize(960, 820)
 
         self.settings = load_settings()
         self.auth: Optional[AuthClient] = None
@@ -110,25 +150,28 @@ class KBLoaderGUI:
 
         title_lbl = ttk.Label(
             header, text=APP_TITLE,
-            font=("Segoe UI Semibold", 18),
+            font=font_bold(18),
         )
         title_lbl.pack(anchor="w")
 
         subtitle_lbl = ttk.Label(
             header, text=APP_SUBTITLE,
-            font=("Segoe UI", 10),
+            font=font_regular(10),
             bootstyle="secondary",
         )
         subtitle_lbl.pack(anchor="w", pady=(2, 0))
 
         ttk.Separator(container, orient="horizontal").pack(fill=X, pady=(0, 14))
 
-        # ── Two-column layout: settings (left) | account+actions (right) ─
+        # Layout: Account (row 0) | Settings (row 1) | Actions (row 2) | Progress (row 3)
+        # Only the Progress card should expand vertically.
         body = ttk.Frame(container)
         body.pack(fill=BOTH, expand=YES)
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=0)
-        body.rowconfigure(1, weight=1)
+        body.rowconfigure(0, weight=0)  # Account — fixed
+        body.rowconfigure(1, weight=0)  # Settings — fixed
+        body.rowconfigure(2, weight=0)  # Actions — fixed
+        body.rowconfigure(3, weight=1)  # Progress — expands
 
         # ── Account card ──────────────────────────────────────────────
         account_card = ttk.Labelframe(body, text="  Account  ", padding=14, bootstyle=PRIMARY)
@@ -142,7 +185,7 @@ class KBLoaderGUI:
         self.auth_icon_var = tk.StringVar(value="○")
         self.auth_icon = ttk.Label(
             account_left, textvariable=self.auth_icon_var,
-            font=("Segoe UI Symbol", 14),
+            font=font_symbol(14),
             bootstyle="secondary",
         )
         self.auth_icon.pack(side=LEFT, padx=(0, 8))
@@ -153,13 +196,13 @@ class KBLoaderGUI:
         self.auth_status_var = tk.StringVar(value="Not signed in")
         ttk.Label(
             auth_text_frame, textvariable=self.auth_status_var,
-            font=("Segoe UI Semibold", 11),
+            font=font_bold(11),
         ).pack(anchor="w")
 
         self.auth_method_var = tk.StringVar(value="")
         ttk.Label(
             auth_text_frame, textvariable=self.auth_method_var,
-            font=("Segoe UI", 9),
+            font=font_regular(9),
             bootstyle="secondary",
         ).pack(anchor="w")
 
@@ -178,34 +221,34 @@ class KBLoaderGUI:
 
         # ── Settings card ────────────────────────────────────────────
         settings_card = ttk.Labelframe(body, text="  Settings  ", padding=14)
-        settings_card.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
+        settings_card.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         settings_card.columnconfigure(1, weight=1)
 
         # Dataverse URL
         ttk.Label(
             settings_card, text="Dataverse URL",
-            font=("Segoe UI Semibold", 10),
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 4))
+            font=font_bold(10),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 2))
         self.dataverse_var = tk.StringVar(value=self.settings.dataverse_url)
         ttk.Entry(
             settings_card, textvariable=self.dataverse_var,
-            font=("Segoe UI", 10),
-        ).grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 4))
+            font=font_regular(10),
+        ).grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 2))
         ttk.Label(
             settings_card,
             text="e.g. https://your-org.crm.dynamics.com",
-            font=("Segoe UI", 9),
+            font=font_regular(9),
             bootstyle="secondary",
-        ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(0, 12))
+        ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(0, 10))
 
         # Source picker
         ttk.Label(
             settings_card, text="Source",
-            font=("Segoe UI Semibold", 10),
-        ).grid(row=2, column=0, sticky="nw", padx=(0, 12), pady=(0, 4))
+            font=font_bold(10),
+        ).grid(row=2, column=0, sticky="nw", padx=(0, 12), pady=(0, 2))
 
         source_frame = ttk.Frame(settings_card)
-        source_frame.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(0, 12))
+        source_frame.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(0, 10))
         source_frame.columnconfigure(1, weight=1)
 
         self.source_mode_var = tk.StringVar(
@@ -218,14 +261,14 @@ class KBLoaderGUI:
             variable=self.source_mode_var, value="sharepoint",
             command=self._on_source_mode_change,
             bootstyle="primary",
-        ).grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 4))
+        ).grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 2))
 
         self.sharepoint_var = tk.StringVar(value=self.settings.sharepoint_folder_url)
         self.sharepoint_entry = ttk.Entry(
             source_frame, textvariable=self.sharepoint_var,
-            font=("Segoe UI", 10),
+            font=font_regular(10),
         )
-        self.sharepoint_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 4))
+        self.sharepoint_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 2))
 
         # Local folder row
         ttk.Radiobutton(
@@ -233,68 +276,70 @@ class KBLoaderGUI:
             variable=self.source_mode_var, value="local",
             command=self._on_source_mode_change,
             bootstyle="primary",
-        ).grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(6, 0))
+        ).grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(4, 0))
 
         self.local_folder_var = tk.StringVar(value=self.settings.local_folder)
         self.local_folder_entry = ttk.Entry(
             source_frame, textvariable=self.local_folder_var,
-            font=("Segoe UI", 10),
+            font=font_regular(10),
         )
-        self.local_folder_entry.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(6, 0))
+        self.local_folder_entry.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(4, 0))
         self.local_browse_btn = ttk.Button(
             source_frame, text="Browse…",
             command=self._browse_local_folder,
             bootstyle=(SECONDARY, "outline"),
             width=10,
         )
-        self.local_browse_btn.grid(row=1, column=2, pady=(6, 0))
+        self.local_browse_btn.grid(row=1, column=2, pady=(4, 0))
 
-        # Output folder
+        # Output folder + Browse + helper inline
         ttk.Label(
             settings_card, text="Output folder",
-            font=("Segoe UI Semibold", 10),
-        ).grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(0, 4))
+            font=font_bold(10),
+        ).grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(0, 2))
         self.output_var = tk.StringVar(value=self.settings.output_dir)
         ttk.Entry(
             settings_card, textvariable=self.output_var,
-            font=("Segoe UI", 10),
-        ).grid(row=3, column=1, sticky="ew", padx=(0, 8), pady=(0, 4))
+            font=font_regular(10),
+        ).grid(row=3, column=1, sticky="ew", padx=(0, 8), pady=(0, 2))
         ttk.Button(
             settings_card, text="Browse…",
             command=self._browse_output_folder,
             bootstyle=(SECONDARY, "outline"),
             width=10,
-        ).grid(row=3, column=2, sticky="e", pady=(0, 4))
+        ).grid(row=3, column=2, sticky="e", pady=(0, 2))
         ttk.Label(
             settings_card,
-            text="Where HTML files and run logs are written",
-            font=("Segoe UI", 9),
+            text="HTML files and run logs are written here",
+            font=font_regular(9),
             bootstyle="secondary",
-        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 12))
+        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(0, 10))
 
-        # Existing article mode
+        # Existing article mode + helper text inline (same row)
         ttk.Label(
             settings_card, text="If article exists",
-            font=("Segoe UI Semibold", 10),
-        ).grid(row=5, column=0, sticky="w", padx=(0, 12), pady=(0, 4))
+            font=font_bold(10),
+        ).grid(row=5, column=0, sticky="w", padx=(0, 12), pady=(0, 0))
+        existing_row = ttk.Frame(settings_card)
+        existing_row.grid(row=5, column=1, columnspan=2, sticky="ew", pady=(0, 0))
         self.existing_var = tk.StringVar(value=self.settings.existing_article_mode)
         existing_combo = ttk.Combobox(
-            settings_card, textvariable=self.existing_var,
+            existing_row, textvariable=self.existing_var,
             values=["skip", "update", "duplicate"],
-            state="readonly", width=14,
-            font=("Segoe UI", 10),
+            state="readonly", width=12,
+            font=font_regular(10),
         )
-        existing_combo.grid(row=5, column=1, sticky="w", pady=(0, 4))
+        existing_combo.pack(side=LEFT)
         ttk.Label(
-            settings_card,
-            text="skip = leave existing  ·  update = overwrite content  ·  duplicate = create another",
-            font=("Segoe UI", 9),
+            existing_row,
+            text="  skip = leave existing  ·  update = overwrite  ·  duplicate = create another",
+            font=font_regular(9),
             bootstyle="secondary",
-        ).grid(row=6, column=1, columnspan=2, sticky="w", pady=(0, 12))
+        ).pack(side=LEFT, padx=(8, 0))
 
         # Save settings link
         save_frame = ttk.Frame(settings_card)
-        save_frame.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        save_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         ttk.Button(
             save_frame, text="Save settings",
             command=self._save_settings,
@@ -350,7 +395,6 @@ class KBLoaderGUI:
         progress_card.grid(row=3, column=0, sticky="nsew", pady=(0, 0))
         progress_card.columnconfigure(0, weight=1)
         progress_card.rowconfigure(2, weight=1)
-        body.rowconfigure(3, weight=1)
 
         # Progress bar with label
         bar_frame = ttk.Frame(progress_card)
@@ -366,7 +410,7 @@ class KBLoaderGUI:
         self.progress_label_var = tk.StringVar(value="Ready")
         ttk.Label(
             bar_frame, textvariable=self.progress_label_var,
-            font=("Segoe UI Semibold", 10),
+            font=font_bold(10),
             width=14, anchor="e",
         ).grid(row=0, column=1, sticky="e")
 
@@ -375,7 +419,7 @@ class KBLoaderGUI:
         util_frame.grid(row=1, column=0, sticky="ew", pady=(8, 8))
         ttk.Label(
             util_frame, text="Live output",
-            font=("Segoe UI Semibold", 10),
+            font=font_bold(10),
         ).pack(side=LEFT)
         self.open_log_btn = ttk.Button(
             util_frame, text="Open detail log",
@@ -402,7 +446,7 @@ class KBLoaderGUI:
             wrap="word",
             height=12,
             autohide=True,
-            font=("Cascadia Mono" if platform.system() == "Windows" else "Menlo", 10),
+            font=font_mono(10),
             padding=8,
         )
         self.log_text.grid(row=2, column=0, sticky="nsew")
@@ -413,7 +457,7 @@ class KBLoaderGUI:
         self.log_text.text.tag_configure("error", foreground="#cf222e")
         self.log_text.text.tag_configure("success", foreground="#1a7f37")
         self.log_text.text.tag_configure("muted", foreground="#656d76")
-        self.log_text.text.tag_configure("bold", font=("Cascadia Mono" if platform.system() == "Windows" else "Menlo", 10, "bold"))
+        self.log_text.text.tag_configure("bold", font=font_mono(10, bold=True))
 
         # ── Status bar ────────────────────────────────────────────────
         status_bar = ttk.Frame(container)
@@ -426,13 +470,13 @@ class KBLoaderGUI:
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(
             status_inner, textvariable=self.status_var,
-            font=("Segoe UI", 9),
+            font=font_regular(9),
             bootstyle="secondary",
         ).pack(side=LEFT)
 
         ttk.Label(
             status_inner, text=f"Theme: {DEFAULT_THEME}",
-            font=("Segoe UI", 9),
+            font=font_regular(9),
             bootstyle="secondary",
         ).pack(side=RIGHT)
 
@@ -892,12 +936,37 @@ class KBLoaderGUI:
         self._refresh_auth_status()
 
 
+def _enable_windows_dpi_awareness():
+    """On Windows, opt into per-monitor DPI awareness so the GUI is crisp on HiDPI displays."""
+    if _SYSTEM != "Windows":
+        return
+    try:
+        import ctypes
+        # PROCESS_PER_MONITOR_DPI_AWARE = 2
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 def launch_gui():
     """Launch the Tkinter GUI. Blocks until the window is closed."""
+    _enable_windows_dpi_awareness()
+
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
 
     root = ttk.Window(themename=DEFAULT_THEME)
+
+    # On macOS, set a proper application name in the menu bar (instead of "Python")
+    if _SYSTEM == "Darwin":
+        try:
+            root.tk.call("tk::mac::standardAboutPanel")
+        except tk.TclError:
+            pass
+
     KBLoaderGUI(root)
     root.mainloop()
 

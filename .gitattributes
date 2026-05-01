@@ -1,0 +1,11 @@
+# Lock line endings so shell scripts work correctly on Mac/Linux
+# even when the repo is checked out on Windows.
+*.command  text eol=lf
+*.sh       text eol=lf
+
+# Windows-specific files keep CRLF
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# Default
+*          text=auto
