@@ -605,13 +605,13 @@ class KBLoaderGUI:
     def _show_sharing_link_recovery_dialog(self, sharing_url: str, message: str):
         """Shown when a SharePoint sharing link can't be auto-resolved.
 
-        Opens the link in the browser and walks the user through pasting the
-        canonical URL from the address bar back into the SharePoint field.
+        Opens the link in the browser, has a paste field for the user to drop the
+        canonical URL into, and a button that applies it back to the main form.
         """
         dlg = tk.Toplevel(self.root)
         dlg.title("Help me load this folder")
         dlg.transient(self.root)
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)
 
         # Center on parent
         self.root.update_idletasks()
@@ -619,8 +619,9 @@ class KBLoaderGUI:
         py = self.root.winfo_rooty()
         pw = self.root.winfo_width()
         ph = self.root.winfo_height()
-        dw, dh = 640, 540
+        dw, dh = 700, 580
         dlg.geometry(f"{dw}x{dh}+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        dlg.minsize(640, 540)
 
         body = ttk.Frame(dlg, padding=24)
         body.pack(fill=BOTH, expand=YES)
@@ -638,97 +639,132 @@ class KBLoaderGUI:
             ),
             font=font_regular(10),
             bootstyle="secondary",
-            wraplength=580,
+            wraplength=620,
             justify="left",
         ).pack(anchor="w", pady=(0, 14))
 
-        # Step 1
+        # Step 1 — Open in browser
         step1 = ttk.Labelframe(body, text="  Step 1 — Open the link in your browser  ", padding=12)
         step1.pack(fill=X, pady=(0, 8))
-        ttk.Label(
-            step1,
-            text=(
-                "Click the button below. Your browser will open to the SharePoint folder."
-            ),
-            font=font_regular(10),
-            justify="left",
-            wraplength=560,
-        ).pack(anchor="w", pady=(0, 8))
 
         def open_link():
             import webbrowser
             try:
                 webbrowser.open(sharing_url)
-                btn.configure(text="Opened — see your browser", bootstyle=SUCCESS)
+                open_btn.configure(text="✓ Opened — see your browser", bootstyle=SUCCESS)
             except Exception as e:
                 Messagebox.show_error(f"Could not open browser: {e}", "Error")
 
-        btn = ttk.Button(
+        open_btn = ttk.Button(
             step1, text="Open link in browser",
             command=open_link,
             bootstyle=PRIMARY,
-            width=24,
+            width=28,
         )
-        btn.pack(anchor="w")
+        open_btn.pack(anchor="w")
 
-        # Step 2
+        # Step 2 — Copy URL
         step2 = ttk.Labelframe(body, text="  Step 2 — Copy the URL from the address bar  ", padding=12)
         step2.pack(fill=X, pady=(0, 8))
         ttk.Label(
             step2,
             text=(
-                "After the SharePoint page loads, click the address bar at the top of "
-                "your browser and copy the entire URL (Ctrl+L then Ctrl+C, or ⌘L then ⌘C).\n\n"
-                "It will look something like:\n"
-                "  https://your-tenant.sharepoint.com/sites/SiteName/Shared%20Documents/Folder…"
+                "After the SharePoint page loads, click the address bar and "
+                "copy the URL — Windows: Ctrl+L then Ctrl+C   ·   Mac: ⌘L then ⌘C"
             ),
             font=font_regular(10),
             justify="left",
-            wraplength=560,
+            wraplength=620,
         ).pack(anchor="w")
 
-        # Step 3
-        step3 = ttk.Labelframe(body, text="  Step 3 — Paste it back here  ", padding=12)
+        # Step 3 — Paste URL into a field RIGHT HERE
+        step3 = ttk.Labelframe(body, text="  Step 3 — Paste it here  ", padding=12)
         step3.pack(fill=X, pady=(0, 8))
+
+        paste_var = tk.StringVar()
+        paste_entry = ttk.Entry(step3, textvariable=paste_var, font=font_regular(10))
+        paste_entry.pack(fill=X, pady=(0, 8))
+
+        def paste_from_clipboard():
+            try:
+                clip = self.root.clipboard_get()
+                paste_var.set(clip.strip())
+                paste_entry.icursor(END)
+            except tk.TclError:
+                pass
+
+        def use_url():
+            new_url = paste_var.get().strip()
+            if not new_url:
+                Messagebox.show_warning(
+                    "Please paste a URL above first.",
+                    "Nothing to apply",
+                )
+                return
+            if not new_url.lower().startswith("https://"):
+                Messagebox.show_warning(
+                    "URLs must start with https://",
+                    "Looks wrong",
+                )
+                return
+            # Apply to the main form and close
+            self.sharepoint_var.set(new_url)
+            try:
+                # Persist immediately so it's not lost
+                from kb_loader.settings import save_settings
+                self.settings.sharepoint_folder_url = new_url
+                save_settings(self.settings)
+            except Exception:
+                pass
+            self._log(f"\n✓ URL updated. Click Test Connection to try again.\n", "success")
+            self._set_status("URL updated — click Test Connection")
+            dlg.destroy()
+
+        btn_inner = ttk.Frame(step3)
+        btn_inner.pack(fill=X)
+        ttk.Button(
+            btn_inner, text="📋 Paste from clipboard",
+            command=paste_from_clipboard,
+            bootstyle=(SECONDARY, "outline"),
+            width=22,
+        ).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(
+            btn_inner, text="Use this URL  →",
+            command=use_url,
+            bootstyle=SUCCESS,
+            width=20,
+        ).pack(side=LEFT)
+
         ttk.Label(
             step3,
-            text=(
-                "Paste the URL into the SharePoint folder URL field (replacing the "
-                "current value), then click Test Connection again."
-            ),
-            font=font_regular(10),
-            justify="left",
-            wraplength=560,
-        ).pack(anchor="w")
+            text="The URL will replace the current SharePoint URL in the main window.",
+            font=font_regular(9),
+            bootstyle="secondary",
+        ).pack(anchor="w", pady=(8, 0))
 
-        # Action buttons
+        # Bottom action row
         btn_row = ttk.Frame(body)
         btn_row.pack(fill=X, pady=(14, 0))
-        ttk.Button(
-            btn_row, text="Got it",
-            command=dlg.destroy,
-            bootstyle=PRIMARY,
-            width=12,
-        ).pack(side=RIGHT)
         ttk.Button(
             btn_row, text="Cancel",
             command=dlg.destroy,
             bootstyle=(SECONDARY, "outline"),
             width=12,
-        ).pack(side=RIGHT, padx=(0, 8))
+        ).pack(side=RIGHT)
 
-        # Auto-open the link to remove a step
+        # Auto-open the link to save the user a click
         try:
             import webbrowser
             webbrowser.open(sharing_url)
-            btn.configure(text="Opened — see your browser", bootstyle=SUCCESS)
+            open_btn.configure(text="✓ Opened — see your browser", bootstyle=SUCCESS)
         except Exception:
             pass
 
+        # Bring dialog to front, then focus the paste field so they can Ctrl+V immediately
         dlg.lift()
         dlg.attributes("-topmost", True)
         dlg.after(500, lambda: dlg.attributes("-topmost", False))
-        dlg.focus_force()
+        paste_entry.focus_set()
 
     def _collect_settings(self) -> Settings:
         """Build a Settings object from the current form values."""
