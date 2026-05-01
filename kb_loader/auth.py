@@ -65,6 +65,10 @@ class AuthClient:
             self._init_msal()
         else:
             self._ensure_az_cli()
+            if not self._tenant_id:
+                self._tenant_id = self._detect_tenant_az()
+                if self._tenant_id:
+                    logger.info(f"Auto-detected tenant: {self._tenant_id}")
 
     # ── MSAL interactive auth ──────────────────────────────────────────
 
@@ -151,6 +155,27 @@ class AuthClient:
                 "Alternatively, set AZURE_CLIENT_ID and AZURE_TENANT_ID in .env to use MSAL instead."
             )
 
+    def _detect_tenant_az(self) -> str:
+        """Try to detect the tenant ID from the current az CLI session."""
+        try:
+            result = subprocess.run(
+                ["az", "account", "show", "--output", "json"],
+                capture_output=True, text=True, timeout=15,
+                shell=_WINDOWS,
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return data.get("tenantId", "")
+        except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        return ""
+
+    def _extract_tenant_from_error(self, stderr: str) -> str:
+        """Parse tenant ID from az CLI error messages like '--tenant "abc-123"'."""
+        import re
+        match = re.search(r'--tenant\s+"([0-9a-f-]{36})"', stderr)
+        return match.group(1) if match else ""
+
     def _login_az(self, resource: str | None = None):
         """Run interactive az login, optionally scoped to a resource."""
         logger.info("Opening browser for Azure login...")
@@ -216,6 +241,12 @@ class AuthClient:
                 return token
 
             if attempt == 0:
+                # Try to extract tenant from the error if we don't have one yet
+                if not self._tenant_id:
+                    detected = self._extract_tenant_from_error(result.stderr)
+                    if detected:
+                        self._tenant_id = detected
+                        logger.info(f"Auto-detected tenant from error: {self._tenant_id}")
                 logger.info(f"Not logged in or token expired for {resource}. Triggering login...")
                 self._login_az(resource)
             else:
