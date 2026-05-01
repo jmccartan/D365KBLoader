@@ -33,12 +33,11 @@ A cross-platform command-line tool that bulk-loads Word documents (`.docx` and `
 - **Python 3.10+**
   - Windows: [Download from python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.13`
   - Mac: `brew install python`
-- **Azure CLI** (`az`) — [Install guide](https://aka.ms/installazurecli)
-  - Windows: `winget install Microsoft.AzureCLI`
-  - Mac: `brew install azure-cli`
-  - No app registration or admin setup needed — just sign in with your Microsoft account
-  - Your account needs access to the D365/Dataverse environment
-  - For SharePoint mode: your account also needs access to the SharePoint site
+- **Authentication** — one of the following:
+  - **Option A (recommended): MSAL interactive login** — register a free public client app in [Entra ID](https://entra.microsoft.com) (no Azure subscription needed). See [Authentication](#authentication) below.
+  - **Option B: Azure CLI** (`az`) — [Install guide](https://aka.ms/installazurecli). Requires an Azure subscription associated with your account.
+- Your account needs access to the D365/Dataverse environment
+- For SharePoint mode: your account also needs access to the SharePoint site
 - **LibreOffice** (only needed if you have legacy `.doc` files — not required for `.docx`)
   - The tool will notify you with install instructions if a `.doc` file is encountered and LibreOffice is not installed
   - Windows: [Download from libreoffice.org](https://www.libreoffice.org/download/) or `winget install TheDocumentFoundation.LibreOffice`
@@ -114,13 +113,34 @@ SHAREPOINT_FOLDER_URL=https://your-tenant.sharepoint.com/sites/YourSite/Shared D
 >
 > **Note:** Sharing links (the kind you get from the **Copy link** / **Share** button) are *not* supported — they start with `/:f:/` and don't contain a direct folder path. Use the browser address bar instead.
 
-### 4. Log in to Azure (one-time)
+### 4. Set up authentication
+
+**Option A — MSAL interactive login (recommended, no Azure subscription needed):**
+
+Register a public client app in Entra ID (free):
+
+1. Go to [entra.microsoft.com](https://entra.microsoft.com) → **App registrations** → **New registration**
+2. **Name:** `D365KBLoader`, **Supported account types:** Single tenant
+3. **Redirect URI:** select **Mobile and desktop applications**, enter `http://localhost`
+4. Under **API permissions**, add:
+   - Microsoft Graph → `Sites.Read.All`, `Files.Read.All`
+   - Dynamics CRM → `user_impersonation`
+5. Copy the **Application (client) ID** and **Directory (tenant) ID** into your `.env`:
+
+```
+AZURE_CLIENT_ID=your-app-id-here
+AZURE_TENANT_ID=your-tenant-id-here
+```
+
+On first run, a browser window will open for sign-in. Tokens are cached locally for future runs.
+
+**Option B — Azure CLI (requires Azure subscription):**
 
 ```bash
 az login
 ```
 
-This opens a browser where you sign in with your Microsoft account. Access tokens are cached across runs.
+This opens a browser where you sign in with your Microsoft account. The tool will use `az account get-access-token` to acquire tokens.
 
 ---
 
@@ -219,11 +239,16 @@ python -m kb_loader --sharepoint-url "https://tenant.sharepoint.com/sites/MySite
 
 ## Authentication
 
-The tool uses **Azure CLI** for authentication — no app registration required.
+The tool supports two authentication methods, controlled by the `AUTH_METHOD` setting in `.env`:
 
-1. If you're not logged in, the tool automatically opens a browser for `az login`
-2. It acquires separate tokens for Graph API (SharePoint access) and Dataverse (article creation)
-3. Tokens are cached by Azure CLI across runs — you won't need to log in every time
+| Method | When to use | Requirements |
+|--------|-------------|--------------|
+| **MSAL interactive** (default if configured) | Demo tenants, no Azure subscription | `AZURE_CLIENT_ID` + `AZURE_TENANT_ID` in `.env` |
+| **Azure CLI** (fallback) | When you have an Azure subscription | `az login` |
+
+**Auto mode** (default): If `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are set, MSAL is used. Otherwise, falls back to Azure CLI.
+
+Both methods acquire separate tokens for Graph API (SharePoint access) and Dataverse (article creation). MSAL tokens are cached locally in `~/.d365kbloader/` across runs.
 
 ---
 
@@ -288,7 +313,7 @@ D365KBLoader/
     ├── __init__.py
     ├── __main__.py           # CLI entry point
     ├── config.py             # Configuration from .env
-    ├── auth.py               # Azure CLI authentication
+    ├── auth.py               # Authentication (MSAL interactive + Azure CLI fallback)
     ├── sharepoint_client.py  # SharePoint file enumeration & download
     ├── dataverse_client.py   # Knowledge Article CRUD & publishing
     ├── converter.py          # Word → HTML conversion (.docx + .doc)
