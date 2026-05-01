@@ -151,8 +151,8 @@ class AuthClient:
                 "Alternatively, set AZURE_CLIENT_ID and AZURE_TENANT_ID in .env to use MSAL instead."
             )
 
-    def _login_az(self):
-        """Run interactive az login."""
+    def _login_az(self, resource: str | None = None):
+        """Run interactive az login, optionally scoped to a resource."""
         logger.info("Opening browser for Azure login...")
         print("\n" + "=" * 60)
         print("  Azure login required. A browser window will open.")
@@ -160,13 +160,21 @@ class AuthClient:
         print("=" * 60 + "\n")
         sys.stdout.flush()
 
-        result = subprocess.run(
-            ["az", "login", "--allow-no-subscriptions", "--output", "none"],
-            timeout=300,
-            shell=_WINDOWS,
-        )
+        cmd = ["az", "login", "--allow-no-subscriptions"]
+        if self._tenant_id:
+            cmd.extend(["--tenant", self._tenant_id])
+        if resource:
+            cmd.extend(["--scope", f"{resource.rstrip('/')}/.default"])
+        cmd.extend(["--output", "none"])
+
+        result = subprocess.run(cmd, timeout=300, shell=_WINDOWS)
         if result.returncode != 0:
-            raise RuntimeError("Azure login failed. Please run 'az login' manually.")
+            raise RuntimeError(
+                "Azure login failed. Try running manually:\n"
+                f"  az logout\n"
+                f"  az login" + (f" --tenant {self._tenant_id}" if self._tenant_id else "")
+                + (f" --scope {resource.rstrip('/')}/.default" if resource else "")
+            )
 
     def _get_token_az(self, resource: str) -> str:
         """Get an access token for the given resource via Azure CLI."""
@@ -177,9 +185,15 @@ class AuthClient:
                 return self._tokens[cache_key]
 
         for attempt in range(2):
+            cmd = [
+                "az", "account", "get-access-token",
+                "--resource", resource, "--output", "json",
+            ]
+            if self._tenant_id:
+                cmd.extend(["--tenant", self._tenant_id])
+
             result = subprocess.run(
-                ["az", "account", "get-access-token", "--resource", resource, "--output", "json"],
-                capture_output=True, text=True, timeout=30,
+                cmd, capture_output=True, text=True, timeout=30,
                 shell=_WINDOWS,
             )
 
@@ -203,7 +217,7 @@ class AuthClient:
 
             if attempt == 0:
                 logger.info(f"Not logged in or token expired for {resource}. Triggering login...")
-                self._login_az()
+                self._login_az(resource)
             else:
                 raise RuntimeError(
                     f"Failed to get token for {resource}: {result.stderr.strip()}"

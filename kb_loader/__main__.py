@@ -244,6 +244,18 @@ def main():
     if not args.dry_run:
         dv_client = DataverseClient(auth, config)
 
+        # Pre-flight: acquire tokens now so auth issues are caught before processing
+        print("Authenticating...")
+        try:
+            auth.get_dataverse_token(config.dataverse_url)
+            if config.input_mode == "sharepoint":
+                auth.get_graph_token()
+            print("  Authentication successful.\n")
+        except RuntimeError as e:
+            print(f"\n  Authentication failed: {e}")
+            logger.error(f"Authentication failed: {e}")
+            sys.exit(1)
+
     # Step 2: Snapshot KB article counts before processing
     run_log = RunLog()
     if dv_client:
