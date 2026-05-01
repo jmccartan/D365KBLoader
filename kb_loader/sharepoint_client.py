@@ -62,8 +62,76 @@ class SharePointClient:
             return resp.json()
         raise RuntimeError(f"Graph API request failed after {MAX_RETRIES} retries: {url}")
 
+    def _is_sharing_link(self, folder_url: str) -> bool:
+        """Detect if the URL is a SharePoint sharing link (vs a direct folder URL)."""
+        from urllib.parse import urlparse, unquote
+        parsed = urlparse(folder_url)
+        decoded_path = unquote(parsed.path)
+        return (
+            "/:f:/" in decoded_path
+            or "/:w:/" in decoded_path
+            or "/:b:/" in decoded_path
+            or "/sharing.aspx" in decoded_path.lower()
+        )
+
+    def _resolve_sharing_link(self, folder_url: str) -> tuple[str, str]:
+        """Resolve a SharePoint sharing link to (drive_id, item_id) via Graph.
+
+        Microsoft Graph's /shares endpoint accepts a base64-url-encoded sharing
+        URL and returns the underlying driveItem. This works for any sharing
+        link the user has access to, regardless of whether they have direct
+        knowledge of the folder path.
+        """
+        import base64
+        # Build the Graph share ID: "u!" + base64url(URL) without padding
+        encoded = base64.urlsafe_b64encode(folder_url.encode("utf-8")).decode("ascii")
+        encoded = encoded.rstrip("=").replace("/", "_").replace("+", "-")
+        share_id = f"u!{encoded}"
+
+        url = f"{GRAPH_BASE}/shares/{share_id}/driveItem"
+        try:
+            data = self._get(url)
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "?"
+            if status in (401, 403):
+                raise ValueError(
+                    "You don't have access to this SharePoint folder.\n"
+                    "Ask the owner to grant you access, or use a folder URL "
+                    "from a site you can already open."
+                )
+            if status == 404:
+                raise ValueError(
+                    "This SharePoint sharing link couldn't be resolved.\n"
+                    "It may have been expired, revoked, or the file may have moved.\n"
+                    "Try opening the link in your browser to verify it still works,\n"
+                    "then copy the URL from the address bar after the page loads."
+                )
+            raise
+
+        # Extract drive_id and item_id from the resolved driveItem
+        item_id = data.get("id")
+        parent_ref = data.get("parentReference") or {}
+        drive_id = parent_ref.get("driveId")
+
+        if not item_id or not drive_id:
+            raise ValueError(
+                "SharePoint sharing link resolved but the response was unexpected.\n"
+                "Try copying the URL straight from the SharePoint address bar instead."
+            )
+
+        # If this points to a single file rather than a folder, fail clearly
+        if "folder" not in data and "file" in data:
+            raise ValueError(
+                "This sharing link points to a single file, not a folder.\n"
+                "Please share the parent folder and use that link instead."
+            )
+
+        name = data.get("name", "(folder)")
+        logger.info(f"Resolved sharing link → {name} (drive: {drive_id}, item: {item_id})")
+        return drive_id, item_id
+
     def _parse_sharepoint_url(self, folder_url: str) -> tuple[str, str, str, str]:
-        """Parse a SharePoint folder URL into (hostname, site_path, library_name, folder_path).
+        """Parse a direct SharePoint folder URL into (hostname, site_path, library_name, folder_path).
 
         Supports clean URLs:
           https://tenant.sharepoint.com/sites/MySite/Shared Documents/MyFolder/Sub
@@ -72,19 +140,9 @@ class SharePointClient:
         And browser-style URLs (copied from the address bar):
           https://tenant.sharepoint.com/sites/MySite/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FMySite%2FShared%20Documents%2FMyFolder&viewid=...
           https://tenant.sharepoint.com/sites/MySite/Shared%20Documents/Forms/AllItems.aspx?RootFolder=%2Fsites%2FMySite%2FShared%20Documents%2FMyFolder
-
-        Also rejects sharing links (e.g. /:f:/ URLs) with a clear error.
         """
         parsed = urlparse(folder_url)
         hostname = parsed.hostname
-
-        # Reject sharing links (e.g. https://tenant.sharepoint.com/:f:/r/sites/...)
-        decoded_path = unquote(parsed.path)
-        if "/:f:/" in decoded_path or "/:w:/" in decoded_path or "/sharing.aspx" in decoded_path.lower():
-            raise ValueError(
-                f"This looks like a SharePoint sharing link: {folder_url}\n"
-                "Please use a direct folder URL instead (see README for details)."
-            )
 
         resolved_path = self._resolve_folder_path_from_url(parsed)
         return self._parse_folder_path(hostname, resolved_path, folder_url)
@@ -215,13 +273,24 @@ class SharePointClient:
         return items
 
     def enumerate_docx_files(self, folder_url: str) -> list[SharePointFile]:
-        """Recursively find all Word files (.docx, .doc) in the given SharePoint folder."""
-        hostname, site_path, library_name, folder_path = self._parse_sharepoint_url(folder_url)
+        """Recursively find all Word files (.docx, .doc) in the given SharePoint folder.
 
-        logger.info(f"Resolving SharePoint site: {hostname}/{site_path}")
-        site_id = self._resolve_site_id(hostname, site_path)
-        drive_id = self._resolve_drive(site_id, library_name)
-        root_item_id = self._resolve_folder_item(drive_id, folder_path)
+        Accepts either:
+          - A direct folder URL from the SharePoint browser address bar, or
+          - A SharePoint sharing link (e.g. https://tenant.sharepoint.com/:f:/s/...)
+
+        Sharing links are resolved automatically via Microsoft Graph's /shares
+        endpoint, so end users don't need to know the difference.
+        """
+        if self._is_sharing_link(folder_url):
+            logger.info(f"Detected SharePoint sharing link, resolving via Graph...")
+            drive_id, root_item_id = self._resolve_sharing_link(folder_url)
+        else:
+            hostname, site_path, library_name, folder_path = self._parse_sharepoint_url(folder_url)
+            logger.info(f"Resolving SharePoint site: {hostname}/{site_path}")
+            site_id = self._resolve_site_id(hostname, site_path)
+            drive_id = self._resolve_drive(site_id, library_name)
+            root_item_id = self._resolve_folder_item(drive_id, folder_path)
 
         files = []
         self._recurse_folder(drive_id, root_item_id, "", files)

@@ -269,7 +269,15 @@ class KBLoaderGUI:
             source_frame, textvariable=self.sharepoint_var,
             font=font_regular(10),
         )
-        self.sharepoint_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 2))
+        self.sharepoint_entry.grid(row=0, column=1, sticky="ew", pady=(0, 2))
+
+        self.sp_help_btn = ttk.Button(
+            source_frame, text="?",
+            command=self._show_sharepoint_help,
+            bootstyle=(INFO, "outline"),
+            width=3,
+        )
+        self.sp_help_btn.grid(row=0, column=2, padx=(8, 0), pady=(0, 2))
 
         # Local folder row
         ttk.Radiobutton(
@@ -488,10 +496,12 @@ class KBLoaderGUI:
         mode = self.source_mode_var.get()
         if mode == "sharepoint":
             self.sharepoint_entry.configure(state=NORMAL)
+            self.sp_help_btn.configure(state=NORMAL)
             self.local_folder_entry.configure(state=DISABLED)
             self.local_browse_btn.configure(state=DISABLED)
         else:
             self.sharepoint_entry.configure(state=DISABLED)
+            self.sp_help_btn.configure(state=DISABLED)
             self.local_folder_entry.configure(state=NORMAL)
             self.local_browse_btn.configure(state=NORMAL)
 
@@ -504,6 +514,93 @@ class KBLoaderGUI:
         folder = filedialog.askdirectory(title="Pick an output folder")
         if folder:
             self.output_var.set(folder)
+
+    def _show_sharepoint_help(self):
+        """Show a wizard-style dialog explaining how to find a SharePoint folder URL."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("How do I get my SharePoint folder URL?")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+
+        # Center on parent
+        self.root.update_idletasks()
+        px = self.root.winfo_rootx()
+        py = self.root.winfo_rooty()
+        pw = self.root.winfo_width()
+        ph = self.root.winfo_height()
+        dw, dh = 620, 480
+        dlg.geometry(f"{dw}x{dh}+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+        body = ttk.Frame(dlg, padding=24)
+        body.pack(fill=BOTH, expand=YES)
+
+        ttk.Label(
+            body, text="How do I get my SharePoint folder URL?",
+            font=font_bold(14),
+        ).pack(anchor="w", pady=(0, 4))
+
+        ttk.Label(
+            body,
+            text="The app supports two URL types — both work fine:",
+            font=font_regular(10),
+            bootstyle="secondary",
+        ).pack(anchor="w", pady=(0, 14))
+
+        # Option 1: Address bar URL
+        opt1 = ttk.Labelframe(body, text="  Option 1 — From the address bar (recommended)  ", padding=12)
+        opt1.pack(fill=X, pady=(0, 10))
+        ttk.Label(
+            opt1,
+            text=(
+                "1. Open SharePoint in your browser\n"
+                "2. Click into the folder you want to load (e.g. 'KB Articles')\n"
+                "3. Copy the entire URL from the address bar\n"
+                "4. Paste it back here\n\n"
+                "Looks like:  https://your-tenant.sharepoint.com/sites/Site/Shared%20Documents/Folder"
+            ),
+            font=font_regular(10),
+            justify="left",
+        ).pack(anchor="w")
+
+        # Option 2: Sharing link
+        opt2 = ttk.Labelframe(body, text="  Option 2 — A sharing link (also OK!)  ", padding=12)
+        opt2.pack(fill=X, pady=(0, 10))
+        ttk.Label(
+            opt2,
+            text=(
+                "1. In SharePoint, right-click the folder → Share → Copy link\n"
+                "2. Paste it back here — the app resolves it automatically\n\n"
+                "Looks like:  https://your-tenant.sharepoint.com/:f:/s/SiteName/Abc123..."
+            ),
+            font=font_regular(10),
+            justify="left",
+        ).pack(anchor="w")
+
+        # Tip
+        ttk.Label(
+            body,
+            text=(
+                "💡  Tip: After pasting, click 'Test Connection' to verify the app "
+                "can find Word files in that folder before doing a full run."
+            ),
+            font=font_regular(9),
+            bootstyle="secondary",
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+
+        # Close button
+        btn_row = ttk.Frame(body)
+        btn_row.pack(fill=X, pady=(14, 0))
+        ttk.Button(
+            btn_row, text="Got it",
+            command=dlg.destroy,
+            bootstyle=PRIMARY,
+            width=12,
+        ).pack(side=RIGHT)
+
+        dlg.lift()
+        dlg.focus_force()
 
     def _collect_settings(self) -> Settings:
         """Build a Settings object from the current form values."""

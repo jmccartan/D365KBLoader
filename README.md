@@ -64,7 +64,7 @@ The app **never prompts for a tenant ID**. It auto-detects from your Azure CLI s
 | Field | Purpose |
 |-------|---------|
 | **Dataverse URL** | The URL of your D365 environment (e.g. `https://your-org.crm.dynamics.com`) |
-| **Source: SharePoint folder URL** | Read documents from SharePoint via the Microsoft Graph API. Paste the URL straight from your browser address bar |
+| **Source: SharePoint folder URL** | Read documents from SharePoint via the Microsoft Graph API. Paste **either** a URL from your browser address bar **or** a sharing link (`Copy link` from SharePoint) — both work. Click the **?** button next to the field for visual help. |
 | **Source: Local folder** | Read documents from a folder on your computer (e.g. a OneDrive-synced SharePoint folder) |
 | **Output folder** | Where HTML files and Excel run logs are written. Defaults to `./output` |
 | **If article exists** | What to do when a Knowledge Article with the same title already exists: |
@@ -182,7 +182,7 @@ Cells are color-coded (green = yes, red = no, yellow = skipped). The Excel file 
 | **macOS: "cannot be opened because the developer cannot be verified"** | Right-click `run.command` → **Open** → click **Open** in the dialog |
 | **Sign-in keeps re-prompting** | Click **Sign Out** in the app, then **Sign In** again. If using Azure CLI, run `az logout && az login` in a terminal |
 | **"Could not get a token from Azure CLI"** | Your account may not have access to that D365 environment. Contact your D365 admin |
-| **"This looks like a SharePoint sharing link"** | Use the URL from your browser's address bar instead — sharing links (the `Copy link` style) aren't supported |
+| **"This looks like a SharePoint sharing link"** | This warning is gone in the latest version — sharing links are now resolved automatically. If you still see it, click the **?** button next to the SharePoint field for help |
 | **Legacy `.doc` files don't convert** | Install [LibreOffice](https://www.libreoffice.org/download/). Modern `.docx` files don't need it |
 | **GUI looks tiny on a HiDPI monitor** | The app enables Windows DPI awareness automatically. If still tiny, try moving the window to your primary display |
 
