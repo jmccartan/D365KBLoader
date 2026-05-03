@@ -19,7 +19,7 @@ from typing import Callable, Optional
 
 from kb_loader.auth import AuthClient
 from kb_loader.converter import convert_to_html, save_html_file, SUPPORTED_EXTENSIONS
-from kb_loader.dataverse_client import DataverseClient
+from kb_loader.dataverse_client import DataverseClient, validate_article_payload
 from kb_loader.run_log import RunLog
 from kb_loader.settings import Settings
 
@@ -278,6 +278,32 @@ def run_load(
                 log_entry["html_saved"] = False
                 status["html"] = "skipped"
 
+            # Pre-flight validation: surface any D365 limits the payload would hit.
+            # Runs in BOTH dry-run and live so the user sees these before publishing.
+            title = Path(doc_file.name).stem
+            source_path = doc_file.source_display
+            payload_issues = validate_article_payload(title, source_path, has_content)
+            block_create = False
+            for severity, msg in payload_issues:
+                prefix = f"{doc_file.name}: {msg}"
+                if severity == "error":
+                    emit(ProgressEvent("error", prefix))
+                    log_entry["error"] = msg
+                    block_create = True
+                elif severity == "warning":
+                    emit(ProgressEvent("warning", prefix))
+                else:  # info
+                    emit(ProgressEvent("info", f"  ℹ {prefix}"))
+
+            # In dry-run also surface mammoth conversion warnings (otherwise
+            # they only land in the detail log file).
+            if config.dry_run and warnings:
+                for w in warnings:
+                    emit(ProgressEvent(
+                        "warning",
+                        f"{doc_file.name}: HTML conversion notice: {w}",
+                    ))
+
             if config.dry_run:
                 log_entry["kb_action"] = "Dry Run"
                 result.skipped += 1
@@ -289,9 +315,19 @@ def run_load(
                 ))
                 continue
 
+            # If a payload-blocking issue was found, skip the live D365 call.
+            if block_create:
+                log_entry["kb_action"] = "Error"
+                result.errors += 1
+                status["kb"] = "ERROR: validation"
+                run_log.add_entry(**log_entry)
+                emit(ProgressEvent(
+                    "file_done", f"{doc_file.name}",
+                    current=i, total=total, file_name=doc_file.name, status=status,
+                ))
+                continue
+
             # Look up article by title
-            title = Path(doc_file.name).stem
-            source_path = doc_file.source_display
             existing = dv_client.find_existing_article(title)
 
             if existing and config.existing_article_mode == "skip":
@@ -299,6 +335,10 @@ def run_load(
                 log_entry["article_id"] = existing["knowledgearticleid"]
                 result.skipped += 1
                 status["kb"] = "skipped (exists)"
+                # Cosmetic-only: nudge the BPF widget to 'Publish' if it's stuck
+                # on an earlier stage. Never modifies article content.
+                if existing.get("statuscode") == 7:  # Published
+                    dv_client.advance_bpf_to_publish_stage(existing["knowledgearticleid"])
             elif existing and config.existing_article_mode == "update":
                 article_id = existing["knowledgearticleid"]
                 dv_client.update_article_content(article_id, title, html, source_path)

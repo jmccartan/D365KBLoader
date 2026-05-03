@@ -1267,14 +1267,24 @@ class KBLoaderGUI:
     # ── Event pump (drains worker queue) ──────────────────────────────
 
     def _drain_event_queue(self):
-        """Process events posted by worker threads."""
+        """Process events posted by worker threads.
+
+        Tolerates the root window having been destroyed mid-flight (e.g. user
+        closes the window while a worker thread is still posting events) — in
+        that case any Tk call raises TclError and we just stop polling.
+        """
         try:
             while True:
                 event = self.event_queue.get_nowait()
                 self._handle_event(event)
         except queue.Empty:
             pass
-        self.root.after(100, self._drain_event_queue)
+        except tk.TclError:
+            return  # Window destroyed; stop the pump.
+        try:
+            self.root.after(100, self._drain_event_queue)
+        except tk.TclError:
+            pass  # Window destroyed between drain and reschedule.
 
     def _handle_event(self, event: tuple):
         kind = event[0]

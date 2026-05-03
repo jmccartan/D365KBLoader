@@ -35,6 +35,91 @@ STATUS_PUBLISHED = 7
 # English language locale ID
 ENGLISH_LOCALE_ID = 1033
 
+# D365 knowledgearticle entity field length limits.
+# These are the standard out-of-box maximums; if a custom org has raised
+# them the truncation here is still safe (we just send a shorter value).
+TITLE_MAX_LENGTH = 1000
+DESCRIPTION_MAX_LENGTH = 155
+KEYWORDS_MAX_LENGTH = 100
+
+
+def _truncate(text, max_length: int) -> str:
+    """Truncate `text` to `max_length` characters, appending an ellipsis if shortened.
+
+    Defensively coerces None / non-string values to an empty string so the
+    payload never contains JSON null for a string field (Dataverse rejects null
+    on most string attributes).
+    """
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    if len(text) <= max_length:
+        return text
+    if max_length <= 3:
+        return text[:max_length]
+    return text[: max_length - 3] + "..."
+
+
+def validate_article_payload(
+    title: str,
+    source_path: str,
+    has_content: bool,
+) -> list[tuple[str, str]]:
+    """Pre-flight checks on values that will be sent to D365.
+
+    Returns a list of (severity, message) tuples. Severity is one of:
+      - "error":   the article cannot be created (D365 will reject it)
+      - "warning": the article will be created but a value will be silently
+                   truncated to fit a D365 field-length limit
+      - "info":    minor notice (e.g. empty content body)
+
+    Empty list means the payload is clean.
+    """
+    issues: list[tuple[str, str]] = []
+
+    # Title
+    if not title or not title.strip():
+        issues.append((
+            "error",
+            "Title is empty (the file name has no usable stem). "
+            "D365 will reject this article — rename the source file.",
+        ))
+    elif len(title) > TITLE_MAX_LENGTH:
+        truncated = _truncate(title, TITLE_MAX_LENGTH)
+        issues.append((
+            "warning",
+            f"Title is {len(title)} chars (D365 max is {TITLE_MAX_LENGTH}). "
+            f"Will be saved as: {truncated!r}",
+        ))
+
+    # Description (auto-generated from source_path)
+    desc = f"Auto-imported from SharePoint: {source_path}"
+    if len(desc) > DESCRIPTION_MAX_LENGTH:
+        issues.append((
+            "warning",
+            f"Description ({len(desc)} chars) exceeds D365 max of "
+            f"{DESCRIPTION_MAX_LENGTH}; will be truncated with an ellipsis.",
+        ))
+
+    # Keywords (= source path)
+    if source_path and len(source_path) > KEYWORDS_MAX_LENGTH:
+        issues.append((
+            "warning",
+            f"Keywords/source-path ({len(source_path)} chars) exceeds D365 max "
+            f"of {KEYWORDS_MAX_LENGTH}; will be truncated with an ellipsis.",
+        ))
+
+    # Body content
+    if not has_content:
+        issues.append((
+            "info",
+            "Document converted to empty HTML — article would be created "
+            "with an empty body. Consider checking the source document.",
+        ))
+
+    return issues
+
 
 class DataverseClient:
     """Client for creating and publishing Knowledge Articles in Dataverse."""
@@ -44,6 +129,9 @@ class DataverseClient:
         self.config = config
         self.session = requests.Session()
         self._language_id: str | None = None
+        # Cached Business Process Flow metadata: (workflowid, instance_entity_set, {stage_name: stage_id})
+        # `False` = lookup attempted but no suitable BPF was found, so don't keep trying.
+        self._kb_bpf: tuple[str, str, dict[str, str]] | None | bool = None
 
     def _headers(self) -> dict:
         return {
@@ -124,14 +212,20 @@ class DataverseClient:
 
     def find_existing_article(self, title: str) -> dict | None:
         """Check if a knowledge article with the given title already exists."""
-        # Escape single quotes in title for OData filter
+        # Escape single quotes in title for OData filter.
+        # Other special characters (& # + etc.) are handled by passing the
+        # filter via the `params` arg, which URL-encodes the whole value.
         safe_title = title.replace("'", "''")
-        url = self._api(
-            f"knowledgearticles?$filter=title eq '{safe_title}'"
-            f"&$select=knowledgearticleid,title,statecode,statuscode"
-            f"&$top=1"
+        url = self._api("knowledgearticles")
+        resp = self._request(
+            "GET",
+            url,
+            params={
+                "$filter": f"title eq '{safe_title}'",
+                "$select": "knowledgearticleid,title,statecode,statuscode",
+                "$top": "1",
+            },
         )
-        resp = self._request("GET", url)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         return records[0] if records else None
@@ -155,10 +249,13 @@ class DataverseClient:
         language_id = self._get_language_id()
 
         article_data = {
-            "title": title,
+            "title": _truncate(title, TITLE_MAX_LENGTH),
             "content": html_content,
-            "keywords": source_path,
-            "description": f"Auto-imported from SharePoint: {source_path}",
+            "keywords": _truncate(source_path, KEYWORDS_MAX_LENGTH),
+            "description": _truncate(
+                f"Auto-imported from SharePoint: {source_path}",
+                DESCRIPTION_MAX_LENGTH,
+            ),
             "languagelocaleid@odata.bind": f"/languagelocale({language_id})",
             "isrootarticle": False,
             "createdon": datetime.now(timezone.utc).isoformat(),
@@ -191,10 +288,13 @@ class DataverseClient:
         language_id = self._get_language_id()
 
         article_data = {
-            "title": title,
+            "title": _truncate(title, TITLE_MAX_LENGTH),
             "content": html_content,
-            "keywords": source_path,
-            "description": f"Auto-imported from SharePoint: {source_path}",
+            "keywords": _truncate(source_path, KEYWORDS_MAX_LENGTH),
+            "description": _truncate(
+                f"Auto-imported from SharePoint: {source_path}",
+                DESCRIPTION_MAX_LENGTH,
+            ),
         }
 
         url = self._api(f"knowledgearticles({article_id})")
@@ -212,20 +312,24 @@ class DataverseClient:
 
         Uses the SetState approach via PATCH. If the org requires intermediate
         transitions (Draft → Approved → Published), this handles both steps.
+        After the state transition, also advances the Business Process Flow
+        widget on the form (Author → Review → Publish) on a best-effort basis
+        — failures there do not fail the publish.
         """
         # Step 1: Try direct transition to Published
         try:
             self._set_state(article_id, STATE_PUBLISHED, STATUS_PUBLISHED)
             logger.info(f"Article {article_id} published directly.")
-            return
         except RuntimeError as e:
             logger.info(f"Direct publish failed, trying via Approved state: {e}")
+            # Step 2: Transition to Approved first, then Published
+            self._set_state(article_id, STATE_APPROVED, STATUS_APPROVED)
+            logger.info(f"Article {article_id} approved.")
+            self._set_state(article_id, STATE_PUBLISHED, STATUS_PUBLISHED)
+            logger.info(f"Article {article_id} published.")
 
-        # Step 2: Transition to Approved first, then Published
-        self._set_state(article_id, STATE_APPROVED, STATUS_APPROVED)
-        logger.info(f"Article {article_id} approved.")
-        self._set_state(article_id, STATE_PUBLISHED, STATUS_PUBLISHED)
-        logger.info(f"Article {article_id} published.")
+        # Step 3: Advance the BPF widget on the form (cosmetic, best-effort)
+        self.advance_bpf_to_publish_stage(article_id)
 
     def _set_state(self, article_id: str, statecode: int, statuscode: int):
         """Update the state and status of a knowledge article."""
@@ -241,6 +345,166 @@ class DataverseClient:
                 f"Failed to set state ({statecode}/{statuscode}) for article {article_id}: "
                 f"{resp.status_code} - {resp.text}"
             )
+
+    # ── Business Process Flow advancement ──────────────────────────────
+    # The Knowledge Article form in D365 Customer Service shows a BPF widget
+    # at the top with stages like Author → Review → Publish. The BPF state is
+    # tracked on a separate auto-generated entity (e.g. `newprocess`), not on
+    # the article itself. After we set statuscode=Published, the BPF widget
+    # would still show "Author" until we also advance the BPF instance.
+    #
+    # The methods below resolve the BPF metadata once (cached), then either
+    # update an existing BPF instance row for the article or create a new one,
+    # setting `activestageid` to the final "Publish" stage and `traversedpath`
+    # to the natural Author→Review→Publish breadcrumb when those stage names
+    # exist. Any failure is logged and swallowed so the load does not fail.
+
+    def _get_kb_bpf_metadata(self) -> tuple[str, str, dict[str, str]] | None:
+        """Resolve & cache the Knowledge Article BPF.
+
+        Returns (workflowid, instance_entity_set, stage_name_to_id). Returns
+        None if no suitable active BPF exists (BPF advancement is skipped).
+        """
+        if self._kb_bpf is False:
+            return None
+        if isinstance(self._kb_bpf, tuple):
+            return self._kb_bpf
+
+        try:
+            r = self._request(
+                "GET",
+                self._api("workflows"),
+                params={
+                    # category 4 = Business Process Flow; statecode 1 = Activated
+                    "$filter": "primaryentity eq 'knowledgearticle' and category eq 4 and statecode eq 1",
+                    "$select": "workflowid,name,uniquename",
+                },
+            )
+            r.raise_for_status()
+            bpfs = r.json().get("value", [])
+            # Prefer the OOB "New Process" BPF used for fresh articles.
+            bpf = next((b for b in bpfs if b.get("uniquename") == "newprocess"), None)
+            if not bpf:
+                # Fall back to any BPF that isn't translation/expired (those are for other lifecycles)
+                bpf = next(
+                    (
+                        b
+                        for b in bpfs
+                        if "translation" not in (b.get("uniquename") or "")
+                        and "expired" not in (b.get("uniquename") or "")
+                    ),
+                    None,
+                )
+            if not bpf:
+                logger.info("No active Knowledge Article BPF found; skipping stage advancement.")
+                self._kb_bpf = False
+                return None
+
+            bpf_id = bpf["workflowid"]
+            unique = bpf["uniquename"]
+
+            # Resolve the BPF instance entity set name via metadata (robust to non-standard pluralization)
+            try:
+                m = self._request(
+                    "GET",
+                    self._api(f"EntityDefinitions(LogicalName='{unique}')"),
+                    params={"$select": "EntitySetName"},
+                )
+                m.raise_for_status()
+                instance_set = m.json().get("EntitySetName") or f"{unique}s"
+            except Exception:
+                instance_set = f"{unique}s"
+
+            r = self._request(
+                "GET",
+                self._api("processstages"),
+                params={
+                    "$filter": f"_processid_value eq {bpf_id}",
+                    "$select": "processstageid,stagename",
+                },
+            )
+            r.raise_for_status()
+            stages = {s["stagename"]: s["processstageid"] for s in r.json().get("value", [])}
+
+            logger.info(
+                f"Resolved Knowledge Article BPF: {bpf['name']!r} "
+                f"(instance set '{instance_set}') with stages: {list(stages.keys())}"
+            )
+            self._kb_bpf = (bpf_id, instance_set, stages)
+            return self._kb_bpf
+        except Exception as e:
+            logger.warning(f"Could not resolve Knowledge Article BPF: {e}")
+            self._kb_bpf = False
+            return None
+
+    def advance_bpf_to_publish_stage(self, article_id: str) -> None:
+        """Best-effort: advance the article's BPF widget to the 'Publish' stage.
+
+        Does NOT raise — any failure is logged at WARNING and swallowed, since
+        BPF advancement is purely cosmetic; the article's state/status was
+        already set by `publish_article`.
+        """
+        meta = self._get_kb_bpf_metadata()
+        if not meta:
+            return
+        bpf_id, instance_set, stages = meta
+
+        publish_stage_id = stages.get("Publish")
+        if not publish_stage_id:
+            logger.info("BPF has no 'Publish' stage; skipping stage advancement.")
+            return
+
+        traversed = ",".join(
+            stages[name] for name in ("Author", "Review", "Publish") if name in stages
+        )
+
+        try:
+            r = self._request(
+                "GET",
+                self._api(instance_set),
+                params={
+                    "$filter": (
+                        f"_knowledgearticleid_value eq {article_id} and "
+                        f"_processid_value eq {bpf_id}"
+                    ),
+                    "$select": "businessprocessflowinstanceid",
+                    "$top": "1",
+                },
+            )
+            r.raise_for_status()
+            rows = r.json().get("value", [])
+
+            if rows:
+                instance_id = rows[0]["businessprocessflowinstanceid"]
+                resp = self._request(
+                    "PATCH",
+                    self._api(f"{instance_set}({instance_id})"),
+                    json={
+                        "activestageid@odata.bind": f"/processstages({publish_stage_id})",
+                        "traversedpath": traversed,
+                    },
+                )
+            else:
+                resp = self._request(
+                    "POST",
+                    self._api(instance_set),
+                    json={
+                        "knowledgearticleid@odata.bind": f"/knowledgearticles({article_id})",
+                        "processid@odata.bind": f"/workflows({bpf_id})",
+                        "activestageid@odata.bind": f"/processstages({publish_stage_id})",
+                        "traversedpath": traversed,
+                    },
+                )
+
+            if resp.status_code in (200, 201, 204):
+                logger.info(f"Article {article_id}: BPF advanced to 'Publish' stage.")
+            else:
+                logger.warning(
+                    f"Article {article_id}: BPF advancement returned "
+                    f"{resp.status_code}: {resp.text[:300]}"
+                )
+        except Exception as e:
+            logger.warning(f"Article {article_id}: BPF advancement failed: {e}")
 
     def get_article_counts_by_status(self) -> dict[str, int]:
         """Get a count of knowledge articles grouped by status.
