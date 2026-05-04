@@ -336,8 +336,7 @@ deactivate
 
 ### Tips
 
-- **Never commit `.venv/` to git** — the project's `.gitignore` already excludes it.
-- While the venv is active, `python` and `pip` resolve to the copies inside `.venv\`. Outside it, they point back at your system Python.
+
 - If `Activate.ps1` is blocked by Windows policy, run this once in PowerShell:
   ```powershell
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
