@@ -26,7 +26,9 @@ Double-click the launcher for your operating system:
 | **Windows** | `run.bat` | Double-click in File Explorer |
 | **macOS** | `run.command` | If macOS blocks it the first time, **right-click → Open** |
 
-The first run takes about a minute to set up the Python environment and install dependencies. After that the app opens in a few seconds.
+The first run takes about a minute to **automatically create a Python virtual environment** (`.venv/` in the project folder) and install dependencies. After that the app opens in a few seconds.
+
+> 💡 **Why a virtual environment?** It keeps the loader's Python packages isolated from the rest of your system, so they can't conflict with other projects. The launchers handle this for you. If you want to use the CLI directly or set things up by hand, see [Setting up a virtual environment](#setting-up-a-virtual-environment-best-practice) at the end of this README.
 
 ### 3. Use the app
 
@@ -273,6 +275,82 @@ Platform-specific behavior:
 - **File / browser opening** — `os.startfile` on Windows, `open` on macOS, `xdg-open` on Linux
 - **Azure CLI calls** — uses `shell=True` only on Windows for `az.cmd` resolution
 - **Line endings** — `.gitattributes` enforces LF on `*.command` so Mac launchers work after a Windows clone
+
+---
+
+## Setting up a virtual environment (best practice)
+
+A **virtual environment** (or "venv") is an isolated copy of Python with its own set of installed packages, kept separate from your system-wide Python. It's the standard way to work with Python projects because it prevents one project's dependencies from clashing with another's, and you can throw it away and recreate it any time without affecting the rest of your machine.
+
+### Automatic (recommended)
+
+The launchers handle the venv for you on every run:
+
+- **Windows** — double-clicking `run.bat` creates `.venv\` in the project folder if it doesn't already exist, installs the packages from `requirements.txt` into it, and runs the GUI from that isolated interpreter.
+- **macOS** — `run.command` does the same thing with `.venv/`.
+
+You don't need to do anything else. If something breaks (e.g. an interrupted install leaves the environment in a weird state), just delete the `.venv\` (Windows) or `.venv/` (macOS) folder and double-click the launcher again — it rebuilds from scratch.
+
+### Manual (CLI users / developers)
+
+If you want to use `python -m kb_loader` directly without the launcher, drive the venv yourself.
+
+**Windows (PowerShell):**
+
+```powershell
+# Create the venv (only needed once)
+python -m venv .venv
+
+# Activate it — your prompt will gain a "(.venv)" prefix
+.\.venv\Scripts\Activate.ps1
+
+# Install the project's dependencies into the venv
+pip install -r requirements.txt
+
+# Run the loader
+python -m kb_loader --help
+
+# When you're done, leave the venv
+deactivate
+```
+
+**Windows (Command Prompt):**
+
+```cmd
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+pip install -r requirements.txt
+python -m kb_loader --help
+deactivate
+```
+
+**macOS / Linux:**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m kb_loader --help
+deactivate
+```
+
+### Tips
+
+- **Never commit `.venv/` to git** — the project's `.gitignore` already excludes it.
+- While the venv is active, `python` and `pip` resolve to the copies inside `.venv\`. Outside it, they point back at your system Python.
+- If `Activate.ps1` is blocked by Windows policy, run this once in PowerShell:
+  ```powershell
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+  ```
+- You can also use the venv interpreter without activating, by calling it directly:
+  ```powershell
+  .\.venv\Scripts\python.exe -m kb_loader
+  ```
+- To upgrade dependencies inside an existing venv:
+  ```powershell
+  .\.venv\Scripts\Activate.ps1
+  pip install --upgrade -r requirements.txt
+  ```
 
 ---
 
