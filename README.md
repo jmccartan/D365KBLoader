@@ -161,10 +161,17 @@ The browser opens automatically to https://microsoft.com/devicelogin — paste t
 
 ### Tenant policy override
 
-If your tenant blocks the default Microsoft Graph PowerShell client, you have two options:
+Some organizations require tenant-admin approval before any third-party Microsoft app can sign users in. If you click **Sign In** and Microsoft shows a screen titled **"Need admin approval"** for the *Microsoft Graph Command Line Tools* app, you have three options (easiest first):
 
-1. **Register your own Entra app** with delegated `Sites.Read.All` and `Files.Read.All` permissions, then set `AZURE_CLIENT_ID=<your-app-id>` in `.env`.
-2. **Force az CLI mode** by setting `KB_LOADER_AUTH=az_cli` in `.env`. (SharePoint enumeration may have limited functionality in this mode — see Troubleshooting.)
+1. **Use Local folder mode instead of SharePoint.** Click **Sync** on the SharePoint document library to bring it down via OneDrive, then point the loader's *Local folder* setting at the synced folder. This skips the Microsoft Graph API entirely, so your tenant's policy on Graph apps no longer matters.
+2. **Have your tenant admin grant one-time consent.** Send them this URL (replacing `{tenant-id}` with your tenant's GUID — your IT team can provide it, or copy it from the address bar of the consent page itself):
+   ```
+   https://login.microsoftonline.com/{tenant-id}/adminconsent?client_id=14d82eec-204b-4c2f-b7e8-296a70dab67e
+   ```
+   While signed in as a Global Admin or Privileged Role Admin, they click **Accept**. The grant covers everyone in the tenant; you only do it once.
+3. **Register your own Entra app** with delegated `Sites.Read.All` and `Files.Read.All` permissions, then set `AZURE_CLIENT_ID=<your-app-id>` in `.env` so the loader uses your private app instead of the default Microsoft public client.
+
+You can also **force az CLI mode** by setting `KB_LOADER_AUTH=az_cli` in `.env`, but SharePoint enumeration may have limited functionality in this mode (the az CLI Graph token doesn't carry `Files.Read.All`).
 
 ### Required permissions
 
@@ -218,6 +225,7 @@ Cells are color-coded (green = yes, red = no, yellow = skipped). The Excel file 
 | **"Python is not installed"** when launching | Install Python from [python.org](https://www.python.org/downloads/). On Windows, check "Add to PATH" during install |
 | **macOS: "cannot be opened because the developer cannot be verified"** | Right-click `run.command` → **Open** → click **Open** in the dialog |
 | **Sign-in keeps re-prompting** | Click **Sign Out** in the app, then **Sign In** again |
+| **Sign-in shows "Need admin approval"** | Your tenant blocks the default Microsoft Graph PowerShell client. Easiest fix: **Sync** the SharePoint folder to your computer via OneDrive and switch the loader to **Local folder** mode. Other options: have your tenant admin grant one-time consent, or register your own Entra app — see [Tenant policy override](#tenant-policy-override) above |
 | **"The SharePoint site was found, but no document libraries are visible"** | Your account isn't a direct Member of the site — only the sharing link gives you access. Either ask the site owner to add you as a Member, OR pick a SharePoint folder you're already a member of, OR sync via OneDrive and use Local folder mode |
 | **SharePoint sharing-link recovery dialog opens** | Sign-in works but Graph couldn't auto-resolve the sharing link. Click **Open link in browser**, copy the URL from the address bar after the page loads, and paste it back into the dialog's Step 3 field |
 | **Legacy `.doc` files don't convert** | Install [LibreOffice](https://www.libreoffice.org/download/). Modern `.docx` files don't need it |

@@ -196,8 +196,79 @@ class AuthClient:
             logger.info("Token acquired via MSAL")
             return result["access_token"]
 
-        error = result.get("error_description", result.get("error", "Unknown error"))
-        raise RuntimeError(f"Sign-in failed: {error}")
+        # Translate the raw MSAL error into something actionable.
+        raise self._build_msal_error(result, scopes)
+
+    # ── MSAL error translation ─────────────────────────────────────────
+
+    # OAuth2 / AAD error codes that mean "this app needs tenant admin consent"
+    # before it can run. We translate any of these into a friendly multi-line
+    # error that tells the user their three options.
+    _CONSENT_ERROR_CODES = (
+        "AADSTS65001",   # User or admin has not consented
+        "AADSTS65004",   # User declined the consent prompt
+        "AADSTS90094",   # Admin consent required for the requested scopes
+        "AADSTS500113",  # No reply address registered (often paired with consent issues)
+        "consent_required",
+        "admin_consent_required",
+        "authorization_declined",
+    )
+
+    def _build_msal_error(self, result: dict, scopes: list[str]) -> RuntimeError:
+        """Turn a raw MSAL token-flow error dict into a RuntimeError with
+        actionable guidance. If the failure looks like a tenant-admin-consent
+        problem (very common in regulated tenants), the message names the
+        three concrete ways forward."""
+        error_code = (result.get("error") or "").lower()
+        description = result.get("error_description") or ""
+        lower_desc = description.lower()
+
+        looks_like_consent = (
+            any(c.lower() in error_code for c in self._CONSENT_ERROR_CODES)
+            or any(c in description for c in self._CONSENT_ERROR_CODES)
+            or "admin approval" in lower_desc
+            or "admin consent" in lower_desc
+            or "needs permission to access" in lower_desc
+        )
+
+        if not looks_like_consent:
+            return RuntimeError(f"Sign-in failed: {description or error_code or 'Unknown error'}")
+
+        tenant_segment = self._tenant_id or "common"
+        consent_url = (
+            f"https://login.microsoftonline.com/{tenant_segment}/adminconsent"
+            f"?client_id={self._client_id}"
+        )
+
+        # Pull a friendly scope summary (e.g. "Sites.Read.All, Files.Read.All").
+        scope_names = ", ".join(s.rsplit("/", 1)[-1] for s in scopes) or "Microsoft Graph"
+
+        return RuntimeError(
+            "Sign-in is blocked by your organization's tenant policy.\n"
+            "Microsoft showed a 'Need admin approval' screen for the\n"
+            f"'Microsoft Graph Command Line Tools' app (client id {self._client_id}).\n"
+            f"It needs the {scope_names} permissions to read the SharePoint folder.\n"
+            "\n"
+            "Three ways forward (easiest first):\n"
+            "\n"
+            " 1. Use Local folder mode instead of SharePoint:\n"
+            "    - In SharePoint, click 'Sync' on the document library to bring it\n"
+            "      down via OneDrive.\n"
+            "    - In the loader, switch the source to 'Local folder' and pick the\n"
+            "      synced folder. This avoids the Microsoft Graph API entirely.\n"
+            "\n"
+            " 2. Have your tenant admin grant one-time consent for the app.\n"
+            "    Send them this URL to click while signed in as a Global Admin or\n"
+            "    Privileged Role Admin:\n"
+            f"      {consent_url}\n"
+            "    The grant covers everyone in your tenant; you only have to do it once.\n"
+            "\n"
+            " 3. Register a private Entra app in your tenant with delegated\n"
+            "    Sites.Read.All + Files.Read.All permissions, then set\n"
+            "    AZURE_CLIENT_ID=<your-app-id> in .env or the Settings panel.\n"
+            "\n"
+            f"(Raw error: {description.strip() or error_code or 'no detail'})"
+        )
 
     # ── Azure CLI auth ─────────────────────────────────────────────────
 
